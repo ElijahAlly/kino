@@ -1,5 +1,6 @@
 {
   "name": "kino",
+  "description": "film finder",
   "version": "1.0.0",
   "private": true,
   "scripts": {
