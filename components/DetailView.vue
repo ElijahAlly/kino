@@ -4,9 +4,20 @@ const props = defineProps<{
   tmdbId: number
 }>()
 
+const router = useRouter()
 const { showToast } = useToast()
 const { saveToLibrary, isInLibrary } = useLibrary()
 const { ensureAuth, clearAuth } = useAuth()
+
+function goBack() {
+  // window.history.length > 1 means there's somewhere to go back to.
+  // (1 = fresh tab opened directly to this URL.)
+  if (window.history.length > 1) {
+    router.back()
+  } else {
+    router.push('/')
+  }
+}
 
 const detail = ref<any>(null)
 const loading = ref(true)
@@ -18,6 +29,7 @@ const addedToLibrary = ref(false)
 const addingSeason = ref(false)
 const seasonProgress = ref('')
 const episodeStates = ref<Record<string, 'loading' | 'added' | 'error'>>({})
+const showTrailer = ref(false)
 
 const inLibrary = computed(() => isInLibrary(props.tmdbId) || addedToLibrary.value)
 
@@ -229,6 +241,9 @@ function epStateClass(season: string, ep: number) {
 
 <template>
   <div v-if="loading" class="page-enter">
+    <button class="back-btn" aria-label="Back" @click="goBack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+    </button>
     <div class="skeleton-hero" />
     <div class="skeleton-detail-header">
       <div class="skeleton-detail-poster" />
@@ -244,6 +259,9 @@ function epStateClass(season: string, ep: number) {
   </div>
 
   <div v-else-if="detail" class="page-enter">
+    <button class="back-btn" aria-label="Back" @click="goBack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+    </button>
     <div class="detail-hero">
       <img v-if="detail.backdrop_path" class="detail-backdrop" :src="backdropUrl(detail.backdrop_path)!" alt="">
       <div v-else class="detail-backdrop-fallback" />
@@ -293,16 +311,14 @@ function epStateClass(season: string, ep: number) {
         </template>
       </button>
 
-      <a
+      <button
         v-if="trailer"
         class="btn-outline"
-        :href="`https://www.youtube.com/watch?v=${trailer.key}`"
-        target="_blank"
-        rel="noopener"
+        @click="showTrailer = true"
       >
         <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
         Watch Trailer
-      </a>
+      </button>
     </div>
 
     <div v-if="overview" class="detail-overview">
@@ -401,8 +417,30 @@ function epStateClass(season: string, ep: number) {
   </div>
 
   <div v-else class="page-enter">
+    <button class="back-btn" aria-label="Back" @click="goBack">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+    </button>
     <div class="empty-state">
       <p>Could not load details.</p>
     </div>
   </div>
+
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="showTrailer && trailer" class="trailer-overlay" @click.self="showTrailer = false">
+        <button class="trailer-close" aria-label="Close" @click="showTrailer = false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+        </button>
+        <div class="trailer-frame">
+          <iframe
+            :src="`https://www.youtube.com/embed/${trailer.key}?autoplay=1&rel=0&modestbranding=1`"
+            title="Trailer"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+          />
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
