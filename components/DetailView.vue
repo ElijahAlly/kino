@@ -6,8 +6,14 @@ const props = defineProps<{
 
 const router = useRouter()
 const { showToast } = useToast()
-const { saveToLibrary, isInLibrary } = useLibrary()
+const { isInLibrary, hasEpisode, syncNow } = useLibrary()
 const { ensureAuth, clearAuth } = useAuth()
+
+// After a successful RD-add, RD takes a moment to register the new torrent.
+// Resync the library quietly so the library page shows it on next visit.
+function refreshLibrarySoon() {
+  setTimeout(() => { syncNow({ silent: true }) }, 4000)
+}
 
 function goBack() {
   // window.history.length > 1 means there's somewhere to go back to.
@@ -112,14 +118,7 @@ async function addToLibrary() {
       return
     }
     addedToLibrary.value = true
-    saveToLibrary({
-      tmdbId: props.tmdbId,
-      imdbId: imdbId.value,
-      title: title.value,
-      posterPath: detail.value?.poster_path || null,
-      type: props.type,
-      addedAt: Date.now(),
-    })
+    refreshLibrarySoon()
     showToast(`${title.value} added to library!`, 'success')
   } catch (err: any) {
     if (err.status === 401 || err.statusCode === 401) {
@@ -153,6 +152,7 @@ async function addEpisode(season: number, episode: number) {
       return
     }
     episodeStates.value[key] = 'added'
+    refreshLibrarySoon()
     showToast(`S${season}E${episode} added!`, 'success')
   } catch (err: any) {
     episodeStates.value[key] = 'error'
@@ -210,15 +210,9 @@ async function addEntireSeason() {
   addingSeason.value = false
   seasonProgress.value = ''
 
+  if (added > 0) refreshLibrarySoon()
+
   if (failed === 0) {
-    saveToLibrary({
-      tmdbId: props.tmdbId,
-      imdbId: imdbId.value,
-      title: title.value,
-      posterPath: detail.value?.poster_path || null,
-      type: 'tv',
-      addedAt: Date.now(),
-    })
     showToast(`Season ${seasonNum} added! (${added} episodes)`, 'success')
   } else {
     showToast(`Added ${added}, ${failed} failed.`, 'error')
@@ -235,7 +229,11 @@ function profileUrl(path: string | null) {
   return path ? `https://image.tmdb.org/t/p/w185${path}` : null
 }
 function epStateClass(season: string, ep: number) {
-  return episodeStates.value[`${season}-${ep}`]
+  const local = episodeStates.value[`${season}-${ep}`]
+  if (local) return local
+  // Reflect synced library state so already-added episodes show as "added".
+  if (hasEpisode(props.tmdbId, Number(season), ep)) return 'added'
+  return undefined
 }
 </script>
 
