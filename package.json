@@ -1,0 +1,14 @@
+{
+  "name": "kino",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "preview": "nuxt preview"
+  },
+  "dependencies": {
+    "nuxt": "^3.16.0",
+    "@vite-pwa/nuxt": "^0.10.6"
+  }
+}

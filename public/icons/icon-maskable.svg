@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bucketGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff1a1a"/>
+      <stop offset="100%" stop-color="#b30000"/>
+    </linearGradient>
+    <linearGradient id="kernelGrad1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fffde0"/>
+      <stop offset="100%" stop-color="#fff3cd"/>
+    </linearGradient>
+    <linearGradient id="kernelGrad2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff8e1"/>
+      <stop offset="100%" stop-color="#ffe0a0"/>
+    </linearGradient>
+    <clipPath id="bucketClip">
+      <path d="M172 258 L340 258 L325 378 Q324 390 312 390 L200 390 Q188 390 187 378 Z"/>
+    </clipPath>
+  </defs>
+  <!-- Solid dark background filling entire canvas -->
+  <rect width="512" height="512" fill="#0d0d0d"/>
+  <!-- All content within the inner 80% safe zone (51.2 to 460.8, centered at 256) -->
+  <!-- Bucket body - scaled down to fit safe zone -->
+  <path d="M172 258 L340 258 L325 378 Q324 390 312 390 L200 390 Q188 390 187 378 Z" fill="url(#bucketGrad)"/>
+  <!-- White stripes on bucket -->
+  <g clip-path="url(#bucketClip)" opacity="0.25">
+    <rect x="190" y="258" width="20" height="135" fill="#fff" transform="skewX(-3)"/>
+    <rect x="228" y="258" width="20" height="135" fill="#fff" transform="skewX(-3)"/>
+    <rect x="266" y="258" width="20" height="135" fill="#fff" transform="skewX(-3)"/>
+    <rect x="304" y="258" width="20" height="135" fill="#fff" transform="skewX(-3)"/>
+  </g>
+  <!-- Bucket rim -->
+  <rect x="164" y="248" width="184" height="16" rx="4" fill="#cc0000"/>
+  <rect x="164" y="248" width="184" height="5" rx="2" fill="#e50914" opacity="0.6"/>
+  <!-- Popcorn kernels - bottom layer -->
+  <ellipse cx="218" cy="232" rx="28" ry="22" fill="url(#kernelGrad2)"/>
+  <ellipse cx="256" cy="224" rx="30" ry="25" fill="url(#kernelGrad1)"/>
+  <ellipse cx="294" cy="232" rx="28" ry="22" fill="url(#kernelGrad2)"/>
+  <!-- Popcorn kernels - middle layer -->
+  <ellipse cx="236" cy="210" rx="24" ry="20" fill="#fff8e1"/>
+  <ellipse cx="276" cy="210" rx="24" ry="20" fill="#fff3cd"/>
+  <ellipse cx="202" cy="218" rx="18" ry="15" fill="#fffde0"/>
+  <ellipse cx="310" cy="220" rx="18" ry="15" fill="#fffde0"/>
+  <!-- Popcorn kernels - top layer -->
+  <ellipse cx="256" cy="196" rx="20" ry="16" fill="#fffde0"/>
+  <ellipse cx="236" cy="194" rx="15" ry="12" fill="#fff8e1"/>
+  <ellipse cx="276" cy="195" rx="15" ry="12" fill="#fff3cd"/>
+  <ellipse cx="256" cy="182" rx="12" ry="10" fill="#fff"/>
+  <!-- Highlights on popcorn -->
+  <ellipse cx="245" cy="218" rx="7" ry="5" fill="#fff" opacity="0.6"/>
+  <ellipse cx="270" cy="206" rx="6" ry="4" fill="#fff" opacity="0.5"/>
+  <ellipse cx="220" cy="208" rx="5" ry="4" fill="#fff" opacity="0.5"/>
+  <ellipse cx="256" cy="188" rx="4" ry="3" fill="#fff" opacity="0.7"/>
+</svg>

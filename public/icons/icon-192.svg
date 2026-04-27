@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="bucketGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff1a1a"/>
+      <stop offset="100%" stop-color="#b30000"/>
+    </linearGradient>
+    <clipPath id="bucketClip">
+      <path d="M52 85 L140 85 L132 155 Q131 162 124 162 L68 162 Q61 162 60 155 Z"/>
+    </clipPath>
+  </defs>
+  <!-- Dark background circle -->
+  <circle cx="96" cy="96" r="90" fill="#0d0d0d"/>
+  <!-- Bucket body -->
+  <path d="M52 85 L140 85 L132 155 Q131 162 124 162 L68 162 Q61 162 60 155 Z" fill="url(#bucketGrad)"/>
+  <!-- White stripes on bucket -->
+  <g clip-path="url(#bucketClip)" opacity="0.3">
+    <rect x="62" y="85" width="10" height="80" fill="#fff" transform="skewX(-3)"/>
+    <rect x="82" y="85" width="10" height="80" fill="#fff" transform="skewX(-3)"/>
+    <rect x="102" y="85" width="10" height="80" fill="#fff" transform="skewX(-3)"/>
+    <rect x="122" y="85" width="10" height="80" fill="#fff" transform="skewX(-3)"/>
+  </g>
+  <!-- Bucket rim -->
+  <rect x="48" y="80" width="96" height="10" rx="3" fill="#cc0000"/>
+  <!-- Popcorn kernels -->
+  <ellipse cx="72" cy="72" rx="14" ry="12" fill="#fff3cd"/>
+  <ellipse cx="96" cy="65" rx="15" ry="13" fill="#fffde0"/>
+  <ellipse cx="120" cy="72" rx="14" ry="12" fill="#fff3cd"/>
+  <ellipse cx="84" cy="55" rx="12" ry="11" fill="#fff8e1"/>
+  <ellipse cx="108" cy="55" rx="12" ry="11" fill="#fff3cd"/>
+  <ellipse cx="96" cy="48" rx="10" ry="9" fill="#fffde0"/>
+  <ellipse cx="68" cy="60" rx="10" ry="9" fill="#fff8e1"/>
+  <ellipse cx="124" cy="62" rx="10" ry="9" fill="#fff8e1"/>
+  <!-- Highlights on popcorn -->
+  <ellipse cx="90" cy="62" rx="4" ry="3" fill="#fff" opacity="0.6"/>
+  <ellipse cx="110" cy="52" rx="3" ry="2" fill="#fff" opacity="0.5"/>
+  <ellipse cx="76" cy="50" rx="3" ry="2" fill="#fff" opacity="0.5"/>
+</svg>
