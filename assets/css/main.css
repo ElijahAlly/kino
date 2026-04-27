@@ -1612,6 +1612,8 @@ img { display: block; max-width: 100%; }
   background: #fff;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 200ms ease;
 }
 .player-volume-slider::-moz-range-thumb {
   width: 16px;
@@ -1621,7 +1623,13 @@ img { display: block; max-width: 100%; }
   cursor: pointer;
   border: none;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 200ms ease;
 }
+.player-volume:hover .player-volume-slider::-webkit-slider-thumb,
+.player-volume-slider:focus::-webkit-slider-thumb { opacity: 1; }
+.player-volume:hover .player-volume-slider::-moz-range-thumb,
+.player-volume-slider:focus::-moz-range-thumb { opacity: 1; }
 
 .player-time {
   font-size: 13px;

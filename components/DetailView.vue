@@ -88,6 +88,15 @@ const addedToLibrary = ref(false)
 const addingSeason = ref(false)
 const seasonProgress = ref('')
 const episodeStates = ref<Record<string, 'loading' | 'added' | 'error'>>({})
+
+const missingEpisodes = computed<any[]>(() => {
+  if (props.type !== 'tv' || !seasonData.value) return []
+  const seasonNum = Number(selectedSeason.value)
+  if (!seasonNum) return []
+  return (seasonData.value.episodes || []).filter(
+    (ep: any) => !hasEpisode(props.tmdbId, seasonNum, ep.episode_number),
+  )
+})
 const showTrailer = ref(false)
 
 const title = computed(() => detail.value?.title || detail.value?.name || 'Untitled')
@@ -237,7 +246,8 @@ async function addEntireSeason() {
   if (!secret) return
 
   const seasonNum = Number(selectedSeason.value)
-  const episodes = seasonData.value?.episodes || []
+  const episodes = missingEpisodes.value
+  if (!episodes.length) return
   addingSeason.value = true
   let added = 0
   let failed = 0
@@ -434,6 +444,7 @@ function epStateClass(season: string, ep: number) {
 
       <div v-else-if="seasonData">
         <button
+          v-if="missingEpisodes.length > 0"
           class="add-season-btn"
           :class="{ loading: addingSeason }"
           :disabled="addingSeason"
@@ -444,7 +455,12 @@ function epStateClass(season: string, ep: number) {
           </template>
           <template v-else>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:16px;height:16px"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            Add Entire Season {{ selectedSeason }}
+            <template v-if="missingEpisodes.length === seasonData.episodes.length">
+              Add Entire Season {{ selectedSeason }}
+            </template>
+            <template v-else>
+              Add Rest of Season ({{ missingEpisodes.length }})
+            </template>
           </template>
         </button>
         <div v-if="seasonProgress" class="season-progress">{{ seasonProgress }}</div>
