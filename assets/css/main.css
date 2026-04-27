@@ -66,7 +66,9 @@ img { display: block; max-width: 100%; }
 .kino-main {
   max-width: 480px;
   margin: 0 auto;
-  padding: 0 16px;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: 16px;
+  padding-right: 16px;
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
   min-height: 100vh;
   min-height: 100dvh;
@@ -76,16 +78,16 @@ img { display: block; max-width: 100%; }
 @media (min-width: 768px) {
   .kino-main {
     max-width: 1100px;
-    padding: 0 24px;
-    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    padding-left: 24px;
+    padding-right: 24px;
   }
 }
 
 @media (min-width: 1280px) {
   .kino-main {
     max-width: 1400px;
-    padding: 0 32px;
-    padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    padding-left: 32px;
+    padding-right: 32px;
   }
 }
 
@@ -131,7 +133,7 @@ img { display: block; max-width: 100%; }
 /* ============================================ Search Bar ============================================ */
 .search-container {
   position: sticky;
-  top: 0;
+  top: env(safe-area-inset-top, 0px);
   z-index: 100;
   padding: 16px 0 12px;
   background: linear-gradient(to bottom, var(--bg) 80%, transparent);
