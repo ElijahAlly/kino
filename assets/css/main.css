@@ -631,6 +631,38 @@ img { display: block; max-width: 100%; }
 .episode-add-btn.added { background: var(--success); pointer-events: none; }
 .episode-add-btn:disabled { cursor: default; }
 
+.episode-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.episode-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: transform 100ms ease, background 150ms ease, opacity 150ms ease;
+}
+.episode-action-btn:active { transform: scale(0.95); }
+.episode-action-btn.watch { background: var(--accent); color: #fff; }
+.episode-action-btn.watch:hover { opacity: 0.9; }
+.episode-action-btn.download {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.episode-action-btn.download:hover { background: var(--surface-hover); }
+.episode-action-btn span { display: inline; }
+@media (max-width: 480px) {
+  .episode-action-btn { padding: 0 8px; }
+  .episode-action-btn span { display: none; }
+}
+
 .add-season-btn {
   width: 100%;
   height: 44px;
@@ -1176,11 +1208,13 @@ img { display: block; max-width: 100%; }
 }
 
 .sync-btn {
-  width: 40px;
   height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  padding: 0;
+  width: 40px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 50%;
@@ -1191,6 +1225,16 @@ img { display: block; max-width: 100%; }
 .sync-btn:disabled { cursor: default; opacity: 0.7; }
 .sync-btn.loading { pointer-events: none; }
 .sync-btn svg { width: 18px; height: 18px; }
+.sync-btn-label { display: none; font-size: 14px; font-weight: 600; }
+
+@media (min-width: 768px) {
+  .sync-btn {
+    width: auto;
+    border-radius: 999px;
+    padding: 0 18px 0 14px;
+  }
+  .sync-btn-label { display: inline; }
+}
 
 .lib-section { margin-bottom: 28px; }
 .lib-section-title {
@@ -1446,6 +1490,17 @@ img { display: block; max-width: 100%; }
 .player-icon-btn:active { transform: scale(0.95); }
 .player-icon-btn svg { width: 22px; height: 22px; }
 
+.player-back-btn { gap: 6px; }
+.player-back-label { display: none; font-size: 14px; font-weight: 600; }
+@media (min-width: 768px) {
+  .player-back-btn {
+    width: auto;
+    border-radius: 999px;
+    padding: 0 14px 0 10px;
+  }
+  .player-back-label { display: inline; }
+}
+
 .player-center-play {
   position: absolute;
   width: 80px;
@@ -1530,34 +1585,42 @@ img { display: block; max-width: 100%; }
   gap: 4px;
 }
 .player-volume-slider {
+  --vol-pct: 100%;
   width: 0;
   height: 4px;
-  background: rgba(255, 255, 255, 0.3);
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--vol-pct),
+    rgba(255, 255, 255, 0.3) var(--vol-pct),
+    rgba(255, 255, 255, 0.3) 100%
+  );
   border-radius: 2px;
   appearance: none;
   -webkit-appearance: none;
   outline: none;
   transition: width 200ms ease;
-  overflow: hidden;
 }
 .player-volume:hover .player-volume-slider,
 .player-volume-slider:focus { width: 80px; }
 .player-volume-slider::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
   cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 .player-volume-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #fff;
   cursor: pointer;
   border: none;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 .player-time {

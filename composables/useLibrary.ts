@@ -117,7 +117,7 @@ export function useLibrary() {
   const lastSyncError = useState<string | null>('library-sync-error', () => null)
 
   const { ensureAuth, clearAuth } = useAuth()
-  const { showToast } = useToast()
+  const { showToast, dismissToast } = useToast()
 
   async function syncNow(opts?: { silent?: boolean }): Promise<void> {
     if (syncing.value) return
@@ -126,7 +126,8 @@ export function useLibrary() {
 
     syncing.value = true
     lastSyncError.value = null
-    if (!opts?.silent) showToast('Syncing library…', 'info')
+    let syncingToastId: number | null = null
+    if (!opts?.silent) syncingToastId = showToast('Syncing library…', 'info')
 
     try {
       const overrides = readOverrides()
@@ -139,8 +140,12 @@ export function useLibrary() {
       })
       library.value = data
       writeCache(data)
-      if (!opts?.silent) showToast('Sync complete', 'success')
+      if (!opts?.silent) {
+        if (syncingToastId != null) dismissToast(syncingToastId)
+        showToast('Sync complete', 'success')
+      }
     } catch (err: any) {
+      if (syncingToastId != null) dismissToast(syncingToastId)
       const status = err.status || err.statusCode
       if (status === 401) {
         clearAuth()
@@ -190,6 +195,12 @@ export function useLibrary() {
     return show.episodes.some(e => e.season === season && e.episode === episode)
   }
 
+  function findEpisode(tmdbId: number, season: number, episode: number): LibraryEpisode | null {
+    const show = findShow(tmdbId)
+    if (!show) return null
+    return show.episodes.find(e => e.season === season && e.episode === episode) || null
+  }
+
   return {
     library,
     syncing,
@@ -200,6 +211,7 @@ export function useLibrary() {
     isInLibrary,
     findShow,
     findMovie,
+    findEpisode,
     hasEpisode,
   }
 }

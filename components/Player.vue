@@ -282,7 +282,8 @@ function onKey(e: KeyboardEvent) {
 }
 
 function exit() {
-  router.back()
+  if (window.history.length > 1) router.back()
+  else router.push('/library')
 }
 
 // ------- formatting -------
@@ -367,8 +368,9 @@ watch(() => props.link, () => {
 
     <!-- Top bar -->
     <div class="player-top">
-      <button class="player-icon-btn" aria-label="Back" @click="exit">
+      <button class="player-icon-btn player-back-btn" aria-label="Back to library" @click="exit">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+        <span class="player-back-label">Back to library</span>
       </button>
       <div class="player-title-block">
         <div class="player-title">{{ title }}</div>
@@ -437,6 +439,7 @@ watch(() => props.link, () => {
             max="1"
             step="0.01"
             :value="muted ? 0 : volume"
+            :style="{ '--vol-pct': `${(muted ? 0 : volume) * 100}%` }"
             @input="setVolume(parseFloat(($event.target as HTMLInputElement).value))"
           >
         </div>

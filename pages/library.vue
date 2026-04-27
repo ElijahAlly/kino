@@ -41,11 +41,11 @@ function syncedLabel(ts: number): string {
 }
 
 function showLink(tmdbId: number) {
-  return `/play/tv/${tmdbId}`
+  return `/tv/${tmdbId}`
 }
 
 function movieLink(tmdbId: number) {
-  return `/play/movie/${tmdbId}`
+  return `/movie/${tmdbId}`
 }
 </script>
 
@@ -69,6 +69,7 @@ function movieLink(tmdbId: number) {
           <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
         </svg>
         <div v-else class="spinner" />
+        <span class="sync-btn-label">{{ syncing ? 'Syncing…' : 'Sync library' }}</span>
       </button>
     </div>
 
