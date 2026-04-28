@@ -14,7 +14,6 @@ const emit = defineEmits<{ close: [] }>()
 const { ensureAuth, clearAuth } = useAuth()
 const { showToast } = useToast()
 
-const checks = ref({ awake: false, tailscale: false, localUrl: false })
 const preparing = ref(false)
 const error = ref<string | null>(null)
 
@@ -24,13 +23,22 @@ onMounted(() => {
   onVercel.value = typeof window !== 'undefined' && window.location.hostname.endsWith('.vercel.app')
 })
 
-const allChecked = computed(() => checks.value.awake && checks.value.tailscale && checks.value.localUrl)
-
 function fmtSize(bytes: number) {
   if (!bytes) return ''
   const gb = bytes / 1_000_000_000
   if (gb >= 1) return `${gb.toFixed(2)} GB`
   return `${(bytes / 1_000_000).toFixed(0)} MB`
+}
+
+// Empirical baseline from observed downloads: ~0.5 GB per 2 min ≈ 240 sec/GB
+// (~4.3 MB/s). Phone/network/RD load will push this around — present as a
+// rough estimate, not a promise.
+function fmtEta(bytes: number) {
+  if (!bytes) return ''
+  const totalSec = (bytes / 1_000_000_000) * 240
+  if (totalSec < 90) return '~1 min'
+  const minutes = Math.round(totalSec / 60)
+  return `~${minutes} min`
 }
 
 function buildOutputName(): string {
@@ -39,7 +47,7 @@ function buildOutputName(): string {
 }
 
 async function start() {
-  if (!allChecked.value || preparing.value) return
+  if (preparing.value) return
   error.value = null
   preparing.value = true
 
@@ -92,20 +100,11 @@ async function start() {
           Downloads only work through your MacBook's Tailscale URL. Open kino on your MacBook's Tailscale address, then try again.
         </div>
 
-        <div class="dl-checklist">
-          <label class="dl-check">
-            <input v-model="checks.awake" type="checkbox">
-            <span>My MacBook is awake and running <code>npm run dev</code></span>
-          </label>
-          <label class="dl-check">
-            <input v-model="checks.tailscale" type="checkbox">
-            <span>My phone and MacBook are both signed into Tailscale</span>
-          </label>
-          <label class="dl-check">
-            <input v-model="checks.localUrl" type="checkbox">
-            <span>I'm visiting kino through my MacBook's Tailscale URL</span>
-          </label>
-        </div>
+        <ul class="dl-checklist dl-checklist--static">
+          <li>MacBook awake and running <code>npm run dev</code></li>
+          <li>Phone and MacBook both signed into Tailscale</li>
+          <li>Visiting kino through your MacBook's Tailscale URL</li>
+        </ul>
 
         <div class="dl-info">
           <div class="dl-info-row">
@@ -114,13 +113,16 @@ async function start() {
           <div v-if="bytes" class="dl-info-row">
             <span>Approx size</span><span>{{ fmtSize(bytes) }}</span>
           </div>
+          <div v-if="bytes" class="dl-info-row">
+            <span>Est. duration</span><span>{{ fmtEta(bytes) }}</span>
+          </div>
         </div>
 
         <div v-if="error" class="dl-error">{{ error }}</div>
 
         <button
           class="modal-submit"
-          :disabled="!allChecked || preparing"
+          :disabled="preparing"
           @click="start"
         >
           <template v-if="preparing">

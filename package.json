@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "nuxt dev",
+    "dev": "nuxt dev --host",
+    "start": "npm run build && npm run preview -- --host",
     "build": "nuxt build",
     "preview": "nuxt preview"
   },

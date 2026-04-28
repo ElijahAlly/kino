@@ -1,6 +1,8 @@
 export default defineNuxtConfig({
   ssr: false,
 
+  devtools: { enabled: false },
+
   app: {
     head: {
       title: 'Kino',
@@ -44,4 +46,10 @@ export default defineNuxtConfig({
   },
 
   compatibilityDate: '2025-01-01',
+
+  vite: {
+    server: {
+      allowedHosts: ['.ts.net'],
+    },
+  },
 })

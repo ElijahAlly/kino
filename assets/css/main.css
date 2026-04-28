@@ -1836,6 +1836,39 @@ img { display: block; max-width: 100%; }
   font-family: ui-monospace, Menlo, monospace;
 }
 
+.dl-checklist--static {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  background: var(--input-bg);
+  border-radius: var(--radius);
+  gap: 6px;
+}
+.dl-checklist--static li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.dl-checklist--static li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.dl-checklist--static code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
 .dl-info {
   display: flex;
   flex-direction: column;
