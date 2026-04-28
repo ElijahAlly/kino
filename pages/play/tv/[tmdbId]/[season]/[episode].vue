@@ -9,6 +9,18 @@ const episodeNum = computed(() => Number(route.params.episode))
 
 const show = computed(() => library.value.tv.find(s => s.tmdbId === tmdbId.value) || null)
 
+// Direct-play payload from DetailView's "Watch" button — see movie route
+// for context. Wins over the library lookup when present (only available
+// for the current navigation; lost on refresh).
+interface DirectPayload {
+  directUrl: string
+  filename: string
+  bytes: number
+  title: string
+  subtitle?: string
+}
+const direct = ref<DirectPayload | null>(null)
+
 const sortedEps = computed(() => {
   if (!show.value) return []
   return [...show.value.episodes].sort((a, b) => a.season - b.season || a.episode - b.episode)
@@ -26,7 +38,17 @@ const nextEpisode = computed(() => {
 })
 
 onMounted(() => {
-  if (!show.value && !syncing.value && library.value.tv.length === 0) {
+  const s = (history.state || {}) as Partial<DirectPayload>
+  if (s.directUrl) {
+    direct.value = {
+      directUrl: s.directUrl,
+      filename: s.filename || `S${seasonNum.value}E${episodeNum.value}.mp4`,
+      bytes: Number(s.bytes) || 0,
+      title: s.title || 'Untitled',
+      subtitle: s.subtitle,
+    }
+  }
+  if (!direct.value && !show.value && !syncing.value && library.value.tv.length === 0) {
     syncNow({ silent: true })
   }
 })
@@ -34,10 +56,12 @@ onMounted(() => {
 function exit() { router.back() }
 
 function gotoEp(season: number, episode: number) {
+  // Clear any stale direct payload — the next ep's URL hasn't been fetched.
+  direct.value = null
   router.replace(`/play/tv/${tmdbId.value}/${season}/${episode}`)
 }
 
-const subtitle = computed(() => {
+const librarySubtitle = computed(() => {
   if (!show.value || !currentEp.value) return ''
   const ep = currentEp.value
   const parts = [
@@ -51,12 +75,24 @@ const subtitle = computed(() => {
 
 <template>
   <Player
-    v-if="show && currentEp"
+    v-if="direct"
+    :tmdb-id="tmdbId"
+    :season="seasonNum"
+    :episode="episodeNum"
+    :title="direct.title"
+    :subtitle="direct.subtitle"
+    :direct-url="direct.directUrl"
+    :bytes="direct.bytes"
+    :filename="direct.filename"
+  />
+
+  <Player
+    v-else-if="show && currentEp"
     :tmdb-id="show.tmdbId"
     :season="currentEp.season"
     :episode="currentEp.episode"
     :title="show.title"
-    :subtitle="subtitle"
+    :subtitle="librarySubtitle"
     :link="currentEp.file.link"
     :bytes="currentEp.file.bytes"
     :filename="currentEp.file.filename"

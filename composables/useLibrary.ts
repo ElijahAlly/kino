@@ -201,6 +201,70 @@ export function useLibrary() {
     return show.episodes.find(e => e.season === season && e.episode === episode) || null
   }
 
+  /**
+   * Delete the RD torrents that back a library entry, then resync. Returns
+   * true on success. The caller decides whether to show a confirm dialog.
+   */
+  async function removeFromLibrary(tmdbId: number, type: 'movie' | 'tv'): Promise<boolean> {
+    const torrentIds = new Set<string>()
+    if (type === 'movie') {
+      const m = findMovie(tmdbId)
+      if (m) torrentIds.add(m.file.torrentId)
+    } else {
+      const s = findShow(tmdbId)
+      if (s) for (const ep of s.episodes) torrentIds.add(ep.file.torrentId)
+    }
+    if (!torrentIds.size) return false
+
+    const secret = await ensureAuth()
+    if (!secret) return false
+
+    try {
+      const res = await $fetch<{ success: boolean; removed: string[]; failed: any[] }>(
+        '/api/library/remove',
+        {
+          method: 'POST',
+          headers: { 'X-App-Secret': secret },
+          body: { torrentIds: [...torrentIds] },
+        },
+      )
+      if (res.removed.length) {
+        // Optimistically drop from local state so the UI updates immediately
+        // — the resync will reconcile any drift.
+        const next: LibraryData = {
+          movies: library.value.movies.filter(m => !res.removed.includes(m.file.torrentId)),
+          tv: library.value.tv
+            .map(s => ({
+              ...s,
+              episodes: s.episodes.filter(e => !res.removed.includes(e.file.torrentId)),
+            }))
+            .filter(s => s.episodes.length > 0),
+          unmatched: library.value.unmatched.filter(u => !res.removed.includes(u.file.torrentId)),
+          syncedAt: library.value.syncedAt,
+        }
+        library.value = next
+        writeCache(next)
+      }
+      // Background resync to pick up any straggler files / dedupe state.
+      setTimeout(() => { syncNow({ silent: true }) }, 1500)
+      if (res.failed.length) {
+        showToast(`Removed ${res.removed.length}, ${res.failed.length} failed.`, 'error')
+        return res.removed.length > 0
+      }
+      showToast('Removed from library', 'success')
+      return true
+    } catch (err: any) {
+      const status = err.status || err.statusCode
+      if (status === 401) {
+        clearAuth()
+        showToast('Invalid passphrase.', 'error')
+      } else {
+        showToast('Remove failed', 'error')
+      }
+      return false
+    }
+  }
+
   return {
     library,
     syncing,
@@ -213,5 +277,6 @@ export function useLibrary() {
     findMovie,
     findEpisode,
     hasEpisode,
+    removeFromLibrary,
   }
 }

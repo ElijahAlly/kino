@@ -11,7 +11,12 @@
  */
 
 interface DlEntry {
-  link: string
+  // Exactly one of link/directUrl is set. `link` is an RD hoster link that
+  // we re-unrestrict at download time (always fresh). `directUrl` is an
+  // already-unrestricted RD URL — we trust it (TTL is shorter than RD's
+  // signed-URL validity window).
+  link?: string
+  directUrl?: string
   filename: string
   bytes: number
   expiry: number

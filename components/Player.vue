@@ -11,8 +11,14 @@ interface Props {
   title: string
   subtitle?: string
 
-  // Source
-  link: string         // RD hoster link (unrestricted on play)
+  // Source — at least one of these must be set:
+  //   link      RD hoster link; we POST /api/stream to unrestrict it on play.
+  //             Used by the library-driven /play/movie/:id route.
+  //   directUrl Already-unrestricted RD download URL. Used when the caller
+  //             came from /api/watch (search/browse → Watch button) and we
+  //             want to skip a redundant unrestrict round-trip.
+  link?: string
+  directUrl?: string
   bytes: number
   filename: string
 
@@ -57,6 +63,21 @@ let saveTimer: number | null = null
 async function resolveStream() {
   loadingStream.value = true
   streamError.value = null
+
+  // Caller already gave us a fresh RD direct URL (Watch-from-search flow).
+  // Use it as-is and skip the /api/stream round-trip.
+  if (props.directUrl) {
+    streamUrl.value = props.directUrl
+    loadingStream.value = false
+    return
+  }
+
+  if (!props.link) {
+    streamError.value = 'No stream source provided.'
+    loadingStream.value = false
+    return
+  }
+
   const secret = await ensureAuth()
   if (!secret) { streamError.value = 'Auth required.'; loadingStream.value = false; return }
   try {
@@ -139,16 +160,31 @@ function onVolumeChange() {
 }
 
 function onVideoError() {
-  // Triggered when the browser can't decode the file (codec/container).
-  // Most common: x265/HEVC in Firefox, AC3 audio in Safari, or PGS subs.
-  if (!videoEl.value || !videoEl.value.error) return
+  // Triggered when the browser can't load/decode the file. Surface as much
+  // diagnostic info as the element exposes — code 4 is ambiguous (it can mean
+  // "unsupported codec", "wrong Content-Type", or "URL unreachable") and we
+  // want to be able to tell which.
+  if (!videoEl.value) return
+  const v = videoEl.value
+  const err = v.error
   const codes: Record<number, string> = {
-    1: 'Playback aborted.',
-    2: 'Network error while loading the file.',
-    3: 'Decoding error — your browser may not support this file\'s codec.',
-    4: 'This file format isn\'t supported by your browser. Try downloading it as MP4 instead.',
+    1: 'Playback aborted',
+    2: 'Network error while loading the file',
+    3: 'Decoding error — codec not supported',
+    4: 'File format isn\'t supported — try downloading it as MP4 instead',
   }
-  streamError.value = codes[videoEl.value.error.code] || 'Unknown playback error'
+  const baseMsg = err ? (codes[err.code] || `Unknown playback error (code ${err.code})`) : 'Playback failed'
+  const detail = err?.message || ''
+
+  const diag = {
+    code: err?.code,
+    message: detail,
+    networkState: v.networkState,
+    readyState: v.readyState,
+    src: v.currentSrc?.slice(0, 200),
+  }
+  console.warn('[player] video error', diag)
+  streamError.value = detail ? `${baseMsg} — ${detail}` : baseMsg
 }
 
 // ------- controls -------
@@ -321,8 +357,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('mouseup', onProgressMouseUp)
 })
 
-// React to props changing (next ep navigation without unmount)
-watch(() => props.link, () => {
+// React to source changing (next-ep navigation without unmount)
+watch(() => [props.link, props.directUrl], () => {
   streamUrl.value = null
   loadingStream.value = true
   streamError.value = null
@@ -458,6 +494,7 @@ watch(() => props.link, () => {
     <DownloadModal
       v-if="showDownloadModal"
       :link="link"
+      :direct-url="directUrl"
       :bytes="bytes"
       :filename="filename"
       :title="title"

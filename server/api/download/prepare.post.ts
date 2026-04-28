@@ -24,14 +24,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event)
-  const { link, filename, bytes } = body || {}
-  if (!link || !filename) {
-    throw createError({ statusCode: 400, message: 'Missing link or filename' })
+  const { link, directUrl, filename, bytes } = body || {}
+  if (!filename || (!link && !directUrl)) {
+    throw createError({ statusCode: 400, message: 'Missing filename or link/directUrl' })
   }
 
   const token = randomToken()
   dlTokens.put(token, {
-    link: String(link),
+    link: link ? String(link) : undefined,
+    directUrl: directUrl ? String(directUrl) : undefined,
     filename: String(filename),
     bytes: Number(bytes) || 0,
   })

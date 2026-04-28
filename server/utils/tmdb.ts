@@ -45,6 +45,70 @@ export interface TmdbSeason {
   episodes: TmdbEpisode[]
 }
 
+/**
+ * Reject TMDB search results that don't actually match the parsed filename.
+ *
+ * Why: a filename like "Wicked.S01E03.1080p.mkv" parses to title="Wicked",
+ * which TMDB returns dozens of matches for (including unrelated/adult titles
+ * that beat the real one on popularity). Taking results[0] blindly is how
+ * "ghost films" appeared in the user's library.
+ *
+ * Rules:
+ *   - normalize both sides to lowercase letters/digits
+ *   - require the parsed title to be a prefix or strong substring of the
+ *     candidate's TMDB title (or vice-versa for short titles)
+ *   - if a year was parsed, prefer candidates within ±1 year, drop those
+ *     more than 2 years off
+ */
+function normalizeTitle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function pickBestResult<T extends { id: number; title?: string; name?: string; release_date?: string; first_air_date?: string }>(
+  results: T[],
+  parsedTitle: string,
+  parsedYear: number | null,
+  isTv: boolean,
+): T | null {
+  if (!results.length) return null
+  const wanted = normalizeTitle(parsedTitle)
+  if (!wanted) return null
+
+  const scored: { r: T; score: number }[] = []
+  for (const r of results) {
+    const tmdbTitle = isTv ? (r.name || '') : (r.title || '')
+    const got = normalizeTitle(tmdbTitle)
+    if (!got) continue
+
+    // Title must overlap meaningfully. Prefix match in either direction
+    // covers "Pluribus" ↔ "Pluribus" and "The Matrix" ↔ "Matrix" cases
+    // without admitting "Witchcraft 2" when we wanted "Wicked".
+    const prefixMatch = got.startsWith(wanted) || wanted.startsWith(got)
+    const containsMatch = got.includes(wanted) || wanted.includes(got)
+    if (!prefixMatch && !containsMatch) continue
+
+    let score = 0
+    if (got === wanted) score += 100
+    else if (prefixMatch) score += 50
+    else score += 10
+
+    const dateStr = isTv ? r.first_air_date : r.release_date
+    const candYear = dateStr ? Number(dateStr.slice(0, 4)) : null
+    if (parsedYear && candYear) {
+      const diff = Math.abs(candYear - parsedYear)
+      if (diff > 2) continue // hard reject — wrong title
+      if (diff === 0) score += 40
+      else if (diff === 1) score += 20
+    }
+
+    scored.push({ r, score })
+  }
+
+  if (!scored.length) return null
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0].r
+}
+
 export class TmdbCache {
   private movies = new Map<string, TmdbMovie | null>()
   private tvs = new Map<string, TmdbTv | null>()
@@ -56,16 +120,20 @@ export class TmdbCache {
     const key = `${title.toLowerCase()}::${year ?? ''}`
     if (this.movies.has(key)) return this.movies.get(key)!
 
-    const params = new URLSearchParams({ api_key: apiKey(), query: title })
+    const params = new URLSearchParams({
+      api_key: apiKey(),
+      query: title,
+      include_adult: 'false',
+    })
     if (year) params.set('year', String(year))
     const res = await fetch(`${TMDB_BASE}/search/movie?${params}`)
     const data: any = res.ok ? await res.json() : { results: [] }
-    const top = data.results?.[0]
-    if (!top) {
+    const picked = pickBestResult(data.results || [], title, year, /* isTv */ false)
+    if (!picked) {
       this.movies.set(key, null)
       return null
     }
-    const full = await this.getMovie(top.id)
+    const full = await this.getMovie(picked.id)
     this.movies.set(key, full)
     return full
   }
@@ -74,23 +142,32 @@ export class TmdbCache {
     const key = `${title.toLowerCase()}::${year ?? ''}`
     if (this.tvs.has(key)) return this.tvs.get(key)!
 
-    const params = new URLSearchParams({ api_key: apiKey(), query: title })
+    const params = new URLSearchParams({
+      api_key: apiKey(),
+      query: title,
+      include_adult: 'false',
+    })
     if (year) params.set('first_air_date_year', String(year))
     const res = await fetch(`${TMDB_BASE}/search/tv?${params}`)
     const data: any = res.ok ? await res.json() : { results: [] }
-    let top = data.results?.[0]
-    if (!top && year) {
-      // retry without year — shows often air the year before/after their parsed-from-filename year
-      const p2 = new URLSearchParams({ api_key: apiKey(), query: title })
+    let picked = pickBestResult(data.results || [], title, year, /* isTv */ true)
+    if (!picked && year) {
+      // Retry without year — shows often air the year before/after the
+      // year parsed from filenames (e.g. release-year vs first-air-year).
+      const p2 = new URLSearchParams({
+        api_key: apiKey(),
+        query: title,
+        include_adult: 'false',
+      })
       const r2 = await fetch(`${TMDB_BASE}/search/tv?${p2}`)
       const d2: any = r2.ok ? await r2.json() : { results: [] }
-      top = d2.results?.[0]
+      picked = pickBestResult(d2.results || [], title, year, /* isTv */ true)
     }
-    if (!top) {
+    if (!picked) {
       this.tvs.set(key, null)
       return null
     }
-    const full = await this.getTv(top.id)
+    const full = await this.getTv(picked.id)
     this.tvs.set(key, full)
     return full
   }

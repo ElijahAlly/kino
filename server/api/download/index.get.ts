@@ -2,6 +2,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { Transform } from 'node:stream'
 import { unrestrictLink } from '~/server/utils/rd'
 import { dlTokens } from '~/server/utils/dlTokens'
+import { parseFilename } from '~/server/utils/parseFilename'
 
 /**
  * Stream the requested RD file through ffmpeg, remuxing to MP4 with AAC audio
@@ -28,18 +29,27 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, message: 'Invalid or expired token' })
   }
 
-  // Resolve the RD hoster link to a fresh direct URL.
+  // Resolve the source URL. Two paths:
+  //   - entry.link  (RD hoster link)  → unrestrict to a fresh direct URL
+  //   - entry.directUrl               → already unrestricted (Watch-now flow)
   let directUrl: string
-  try {
-    const data = await unrestrictLink(entry.link)
-    directUrl = data.download
-  } catch (err: any) {
-    throw createError({ statusCode: 502, message: `RD unrestrict failed: ${err.message}` })
+  if (entry.link) {
+    try {
+      const data = await unrestrictLink(entry.link)
+      directUrl = data.download
+    } catch (err: any) {
+      throw createError({ statusCode: 502, message: `RD unrestrict failed: ${err.message}` })
+    }
+  } else if (entry.directUrl) {
+    directUrl = entry.directUrl
+  } else {
+    throw createError({ statusCode: 400, message: 'Token has no link or directUrl' })
   }
 
-  // Build the output filename: same base, .mp4 extension.
-  const base = entry.filename.replace(/\.[a-z0-9]{2,4}$/i, '')
-  const outName = `${base}.mp4`
+  // Build a short, human-friendly output name from the raw release filename.
+  //   "Pluribus (2025) - S01E05 - Got Milk (1080p ATVP WEB-DL x265 Ghost).mp4"
+  //   → "Pluribus S01E05 - Got Milk.mp4"
+  const outName = buildShortName(entry.filename)
 
   // Probe the source video codec. iOS / AVPlayer only plays HEVC in MP4 when
   // the codec tag is `hvc1`; ffmpeg's `-c:v copy` preserves whatever the source
@@ -114,12 +124,13 @@ export default defineEventHandler(async (event) => {
   const expectedBytes = entry.bytes || 0
   let transferred = 0
   let lastTickMs = 0
-  let lastLoggedPct = -1
 
   console.log(`[download] start "${outName}" expected≈${fmtBytes(expectedBytes)} pid=${ffmpeg.pid}`)
 
-  // Tee bytes flowing from ffmpeg → response so we can render a progress bar
-  // and accurate completion logs. The transform passes data through unchanged.
+  // Tee bytes flowing from ffmpeg → response so we can render a single live
+  // progress bar that overwrites itself in place via \r. The transform passes
+  // data through unchanged. No periodic log lines: the user wants exactly
+  // start / bar / done in the terminal, with extra lines only on warn/error.
   const counter = new Transform({
     transform(chunk: any, _enc: any, cb: any) {
       transferred += chunk.length
@@ -128,16 +139,6 @@ export default defineEventHandler(async (event) => {
       if (now - lastTickMs >= 250) {
         lastTickMs = now
         renderProgress(transferred, expectedBytes, startedAt)
-      }
-      // Also drop a permanent log line every 10% so logs stay grep-able even
-      // after the live bar gets overwritten.
-      if (expectedBytes > 0) {
-        const pct = Math.floor((transferred / expectedBytes) * 10) * 10
-        if (pct >= 10 && pct !== lastLoggedPct) {
-          lastLoggedPct = pct
-          process.stdout.write('\n')
-          console.log(`[download] ${pct}% — ${fmtBytes(transferred)} / ${fmtBytes(expectedBytes)} in ${fmtDuration((now - startedAt) / 1000)}`)
-        }
       }
       cb(null, chunk)
     },
@@ -202,6 +203,53 @@ export default defineEventHandler(async (event) => {
   // Don't return — Nuxt would try to send another response. Mark handled.
   return new Promise(() => {})
 })
+
+/**
+ * Turn a raw release filename into a short, friendly output name.
+ *
+ *   "Pluribus (2025) - S01E05 - Got Milk (1080p ATVP WEB-DL x265 Ghost).mp4"
+ *     → "Pluribus S01E05 - Got Milk.mp4"
+ *
+ *   "The Matrix (1999) (1080p BluRay x265 10bit Tigole).mkv"
+ *     → "The Matrix (1999).mp4"
+ *
+ * Falls back to the original base name (with .mp4 ext) when parsing fails.
+ */
+function buildShortName(raw: string): string {
+  const stripped = raw.replace(/\.[a-z0-9]{2,4}$/i, '')
+  const parsed = parseFilename(raw)
+
+  if (parsed.season != null && parsed.episode != null && parsed.title) {
+    const ss = String(parsed.season).padStart(2, '0')
+    const ee = String(parsed.episode).padStart(2, '0')
+    const seCode = `S${ss}E${ee}`
+
+    // Episode title lives between SxxExx and the first quality/group bracket.
+    const seMatch = stripped.match(/[Ss]\d{1,2}[Ee]\d{1,3}/)
+    let epTitle = ''
+    if (seMatch) {
+      const tail = stripped.slice(seMatch.index! + seMatch[0].length)
+      epTitle = tail
+        .split(/\s*[(\[]/)[0]
+        .replace(/[._]+/g, ' ')
+        .replace(/^[\s\-]+|[\s\-]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
+
+    return epTitle
+      ? `${parsed.title} ${seCode} - ${epTitle}.mp4`
+      : `${parsed.title} ${seCode}.mp4`
+  }
+
+  if (parsed.title) {
+    return parsed.year
+      ? `${parsed.title} (${parsed.year}).mp4`
+      : `${parsed.title}.mp4`
+  }
+
+  return `${stripped}.mp4`
+}
 
 function fmtBytes(b: number): string {
   if (!b) return '0 B'

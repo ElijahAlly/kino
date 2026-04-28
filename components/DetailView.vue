@@ -6,7 +6,7 @@ const props = defineProps<{
 
 const router = useRouter()
 const { showToast } = useToast()
-const { hasEpisode, syncNow, findMovie, findEpisode, library } = useLibrary()
+const { hasEpisode, syncNow, findMovie, findEpisode, library, removeFromLibrary } = useLibrary()
 const { ensureAuth, clearAuth } = useAuth()
 
 const libraryMovie = computed(() => props.type === 'movie' ? findMovie(props.tmdbId) : null)
@@ -15,8 +15,9 @@ const libraryShow = computed(() => props.type === 'tv'
   : null,
 )
 
-const downloadTarget = ref<{
-  link: string
+interface DownloadTarget {
+  link?: string
+  directUrl?: string
   bytes: number
   filename: string
   title: string
@@ -24,41 +25,199 @@ const downloadTarget = ref<{
   tmdbId: number
   season?: number
   episode?: number
-} | null>(null)
-
-function watchMovie() {
-  router.push(`/play/movie/${props.tmdbId}`)
 }
 
-function downloadMovie() {
-  const m = libraryMovie.value
-  if (!m) return
-  downloadTarget.value = {
-    link: m.file.link,
-    bytes: m.file.bytes,
-    filename: m.file.filename,
-    title: m.title,
-    subtitle: m.year ? String(m.year) : undefined,
-    tmdbId: m.tmdbId,
+const downloadTarget = ref<DownloadTarget | null>(null)
+const watching = ref(false)
+const downloadingFromBrowse = ref(false)
+const removing = ref(false)
+
+interface WatchResp {
+  success: boolean
+  url?: string
+  filename?: string
+  filesize?: number
+  hosterLink?: string | null
+  title?: string
+  error?: string
+  attempts?: string[]
+}
+
+async function callWatch(opts: {
+  mode: 'play' | 'download' | 'add'
+  season?: number
+  episode?: number
+  preferCodec?: 'h264' | 'any'
+}): Promise<WatchResp | null> {
+  if (!imdbId.value) { showToast('No IMDb ID available.', 'error'); return null }
+  const secret = await ensureAuth()
+  if (!secret) return null
+  try {
+    return await $fetch<WatchResp>('/api/watch', {
+      method: 'POST',
+      headers: { 'X-App-Secret': secret },
+      body: {
+        imdbId: imdbId.value,
+        season: opts.season,
+        episode: opts.episode,
+        mode: opts.mode,
+        preferCodec: opts.preferCodec,
+      },
+    })
+  } catch (err: any) {
+    if (err.status === 401 || err.statusCode === 401) {
+      clearAuth()
+      showToast('Invalid passphrase.', 'error')
+    } else {
+      showToast(err.message || 'Request failed', 'error')
+    }
+    return null
   }
 }
 
-function watchEpisode(season: number, episode: number) {
-  router.push(`/play/tv/${props.tmdbId}/${season}/${episode}`)
+async function watchMovie() {
+  // Library shortcut: skip /api/watch entirely if we already have the file.
+  if (libraryMovie.value) {
+    router.push(`/play/movie/${props.tmdbId}`)
+    return
+  }
+  if (watching.value) return
+  watching.value = true
+  try {
+    const res = await callWatch({ mode: 'play', preferCodec: 'h264' })
+    if (!res?.success || !res.url) {
+      showToast(res?.error || 'Stream not available', 'error')
+      return
+    }
+    // Stash payload in router state. Player picks it up by tmdbId; if state
+    // is missing (e.g. refresh), we fall back to the library lookup.
+    router.push({
+      path: `/play/movie/${props.tmdbId}`,
+      state: {
+        directUrl: res.url,
+        filename: res.filename || `${title.value}.mp4`,
+        bytes: res.filesize || 0,
+        title: title.value,
+        subtitle: year.value || undefined,
+      },
+    })
+  } finally {
+    watching.value = false
+  }
 }
 
-function downloadEpisode(season: number, episode: number) {
+async function downloadMovie() {
+  if (libraryMovie.value) {
+    const m = libraryMovie.value
+    downloadTarget.value = {
+      link: m.file.link,
+      bytes: m.file.bytes,
+      filename: m.file.filename,
+      title: m.title,
+      subtitle: m.year ? String(m.year) : undefined,
+      tmdbId: m.tmdbId,
+    }
+    return
+  }
+  if (downloadingFromBrowse.value) return
+  downloadingFromBrowse.value = true
+  try {
+    const res = await callWatch({ mode: 'download', preferCodec: 'any' })
+    if (!res?.success || !res.url) {
+      showToast(res?.error || 'Download source not available', 'error')
+      return
+    }
+    downloadTarget.value = {
+      link: res.hosterLink || undefined,
+      directUrl: res.hosterLink ? undefined : res.url,
+      bytes: res.filesize || 0,
+      filename: res.filename || `${title.value}.mp4`,
+      title: title.value,
+      subtitle: year.value || undefined,
+      tmdbId: props.tmdbId,
+    }
+  } finally {
+    downloadingFromBrowse.value = false
+  }
+}
+
+async function watchEpisode(season: number, episode: number) {
+  if (hasEpisode(props.tmdbId, season, episode)) {
+    router.push(`/play/tv/${props.tmdbId}/${season}/${episode}`)
+    return
+  }
+  const key = `${season}-${episode}`
+  episodeStates.value[key] = 'loading'
+  try {
+    const res = await callWatch({ mode: 'play', season, episode, preferCodec: 'h264' })
+    if (!res?.success || !res.url) {
+      episodeStates.value[key] = 'error'
+      showToast(res?.error || 'Stream not available', 'error')
+      return
+    }
+    episodeStates.value[key] = 'added'
+    router.push({
+      path: `/play/tv/${props.tmdbId}/${season}/${episode}`,
+      state: {
+        directUrl: res.url,
+        filename: res.filename || `${title.value} S${season}E${episode}.mp4`,
+        bytes: res.filesize || 0,
+        title: title.value,
+        subtitle: `S${season}E${episode}`,
+      },
+    })
+  } catch {
+    episodeStates.value[key] = 'error'
+  }
+}
+
+async function downloadEpisode(season: number, episode: number) {
   const ep = findEpisode(props.tmdbId, season, episode)
-  if (!ep || !libraryShow.value) return
+  if (ep && libraryShow.value) {
+    downloadTarget.value = {
+      link: ep.file.link,
+      bytes: ep.file.bytes,
+      filename: ep.file.filename,
+      title: libraryShow.value.title,
+      subtitle: `S${ep.season}E${ep.episode}${ep.name ? ' · ' + ep.name : ''}`,
+      tmdbId: props.tmdbId,
+      season: ep.season,
+      episode: ep.episode,
+    }
+    return
+  }
+  const key = `${season}-${episode}`
+  episodeStates.value[key] = 'loading'
+  const res = await callWatch({ mode: 'download', season, episode, preferCodec: 'any' })
+  if (!res?.success || !res.url) {
+    episodeStates.value[key] = 'error'
+    showToast(res?.error || 'Download source not available', 'error')
+    return
+  }
+  episodeStates.value[key] = 'added'
   downloadTarget.value = {
-    link: ep.file.link,
-    bytes: ep.file.bytes,
-    filename: ep.file.filename,
-    title: libraryShow.value.title,
-    subtitle: `S${ep.season}E${ep.episode}${ep.name ? ' · ' + ep.name : ''}`,
+    link: res.hosterLink || undefined,
+    directUrl: res.hosterLink ? undefined : res.url,
+    bytes: res.filesize || 0,
+    filename: res.filename || `${title.value} S${season}E${episode}.mp4`,
+    title: title.value,
+    subtitle: `S${season}E${episode}`,
     tmdbId: props.tmdbId,
-    season: ep.season,
-    episode: ep.episode,
+    season,
+    episode,
+  }
+}
+
+async function removeTitle() {
+  const isInLib = props.type === 'movie' ? !!libraryMovie.value : !!libraryShow.value
+  if (!isInLib) return
+  const ok = window.confirm(`Remove "${title.value}" from your library? This deletes it from Real-Debrid.`)
+  if (!ok) return
+  removing.value = true
+  try {
+    await removeFromLibrary(props.tmdbId, props.type)
+  } finally {
+    removing.value = false
   }
 }
 
@@ -177,74 +336,36 @@ async function loadSeason(num: string) {
 }
 
 async function addToLibrary() {
-  if (!imdbId.value) { showToast('No IMDb ID available.', 'error'); return }
-  const secret = await ensureAuth()
-  if (!secret) return
-
   addingLibrary.value = true
   try {
-    const result = await $fetch<any>('/api/watch', {
-      method: 'POST',
-      headers: { 'X-App-Secret': secret },
-      body: { imdbId: imdbId.value },
-    })
-    if (!result.success) {
-      showToast(result.error || 'Not available.', 'error')
+    const result = await callWatch({ mode: 'add' })
+    if (!result?.success) {
+      showToast(result?.error || 'Not available.', 'error')
       return
     }
     addedToLibrary.value = true
     refreshLibrarySoon()
-    showToast(`${title.value} added to library!`, 'success')
-  } catch (err: any) {
-    if (err.status === 401 || err.statusCode === 401) {
-      clearAuth()
-      showToast('Invalid passphrase.', 'error')
-    } else {
-      showToast('Failed to add. Try again.', 'error')
-    }
+    showToast(`${title.value} saved to library!`, 'success')
   } finally {
     addingLibrary.value = false
   }
 }
 
 async function addEpisode(season: number, episode: number) {
-  if (!imdbId.value) { showToast('No IMDb ID.', 'error'); return }
-  const secret = await ensureAuth()
-  if (!secret) return
-
   const key = `${season}-${episode}`
   episodeStates.value[key] = 'loading'
-
-  try {
-    const result = await $fetch<any>('/api/watch', {
-      method: 'POST',
-      headers: { 'X-App-Secret': secret },
-      body: { imdbId: imdbId.value, season, episode },
-    })
-    if (!result.success) {
-      episodeStates.value[key] = 'error'
-      showToast(result.error || `S${season}E${episode} not available.`, 'error')
-      return
-    }
-    episodeStates.value[key] = 'added'
-    refreshLibrarySoon()
-    showToast(`S${season}E${episode} added!`, 'success')
-  } catch (err: any) {
+  const result = await callWatch({ mode: 'add', season, episode })
+  if (!result?.success) {
     episodeStates.value[key] = 'error'
-    if (err.status === 401 || err.statusCode === 401) {
-      clearAuth()
-      showToast('Invalid passphrase.', 'error')
-    } else {
-      showToast(`Failed to add S${season}E${episode}.`, 'error')
-    }
+    showToast(result?.error || `S${season}E${episode} not available.`, 'error')
+    return
   }
+  episodeStates.value[key] = 'added'
+  refreshLibrarySoon()
+  showToast(`S${season}E${episode} added!`, 'success')
 }
 
 async function addEntireSeason() {
-  if (!imdbId.value) { showToast('No IMDb ID.', 'error'); return }
-  const secret = await ensureAuth()
-  if (!secret) return
-
   const seasonNum = Number(selectedSeason.value)
   const episodes = missingEpisodes.value
   if (!episodes.length) return
@@ -257,29 +378,13 @@ async function addEntireSeason() {
     const key = `${seasonNum}-${ep.episode_number}`
     episodeStates.value[key] = 'loading'
 
-    try {
-      const result = await $fetch<any>('/api/watch', {
-        method: 'POST',
-        headers: { 'X-App-Secret': secret },
-        body: { imdbId: imdbId.value, season: seasonNum, episode: ep.episode_number },
-      })
-      if (!result.success) {
-        episodeStates.value[key] = 'error'
-        failed++
-      } else {
-        episodeStates.value[key] = 'added'
-        added++
-      }
-    } catch (err: any) {
+    const result = await callWatch({ mode: 'add', season: seasonNum, episode: ep.episode_number })
+    if (!result?.success) {
       episodeStates.value[key] = 'error'
       failed++
-      if (err.status === 401 || err.statusCode === 401) {
-        clearAuth()
-        showToast('Invalid passphrase.', 'error')
-        addingSeason.value = false
-        seasonProgress.value = ''
-        return
-      }
+    } else {
+      episodeStates.value[key] = 'added'
+      added++
     }
   }
 
@@ -365,40 +470,80 @@ function epStateClass(season: string, ep: number) {
     </div>
 
     <div class="detail-actions">
-      <template v-if="type === 'movie' && libraryMovie">
-        <button class="btn-primary" @click="watchMovie">
-          <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-          Watch
+      <template v-if="type === 'movie'">
+        <button class="btn-primary" :disabled="watching" @click="watchMovie">
+          <template v-if="watching">
+            <div class="spinner" /> Finding stream…
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+            Watch
+          </template>
         </button>
-        <button class="btn-outline" @click="downloadMovie">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          Download
+        <button class="btn-outline" :disabled="downloadingFromBrowse" @click="downloadMovie">
+          <template v-if="downloadingFromBrowse">
+            <div class="spinner" /> Preparing…
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download
+          </template>
+        </button>
+        <button
+          v-if="!libraryMovie"
+          class="btn-outline"
+          :class="{ loading: addingLibrary, success: addedToLibrary }"
+          :disabled="addingLibrary || addedToLibrary"
+          @click="addToLibrary"
+        >
+          <template v-if="addingLibrary">
+            <div class="spinner" /> Adding…
+          </template>
+          <template v-else-if="addedToLibrary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="20 6 9 17 4 12" /></svg>
+            Added!
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:18px;height:18px"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            Save for later
+          </template>
+        </button>
+        <button
+          v-else
+          class="btn-outline"
+          :disabled="removing"
+          @click="removeTitle"
+        >
+          <template v-if="removing">
+            <div class="spinner" /> Removing…
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+            Remove
+          </template>
         </button>
       </template>
 
-      <button
-        v-else-if="type === 'movie'"
-        class="btn-primary"
-        :class="{ loading: addingLibrary, success: addedToLibrary }"
-        :disabled="addingLibrary || addedToLibrary"
-        @click="addToLibrary"
-      >
-        <template v-if="addingLibrary">
-          <div class="spinner" /> Adding...
-        </template>
-        <template v-else-if="addedToLibrary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="20 6 9 17 4 12" /></svg>
-          Added!
-        </template>
-        <template v-else>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:18px;height:18px"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-          Add to Library
-        </template>
-      </button>
+      <template v-else-if="type === 'tv'">
+        <button
+          v-if="libraryShow"
+          class="btn-outline"
+          :disabled="removing"
+          @click="removeTitle"
+        >
+          <template v-if="removing">
+            <div class="spinner" /> Removing…
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
+            Remove from library
+          </template>
+        </button>
+      </template>
 
       <button
         v-if="trailer"
@@ -473,37 +618,39 @@ function epStateClass(season: string, ep: number) {
               <div v-if="ep.runtime" class="episode-meta">{{ ep.runtime }} min</div>
             </div>
             <div class="episode-actions">
-              <template v-if="hasEpisode(tmdbId, Number(selectedSeason), ep.episode_number)">
-                <button
-                  class="episode-action-btn watch"
-                  aria-label="Watch"
-                  title="Watch"
-                  @click="watchEpisode(Number(selectedSeason), ep.episode_number)"
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                  <span>Watch</span>
-                </button>
-                <button
-                  class="episode-action-btn download"
-                  aria-label="Download"
-                  title="Download"
-                  @click="downloadEpisode(Number(selectedSeason), ep.episode_number)"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  <span>Download</span>
-                </button>
-              </template>
               <button
-                v-else
+                class="episode-action-btn watch"
+                aria-label="Watch"
+                title="Watch"
+                :disabled="epStateClass(selectedSeason, ep.episode_number) === 'loading'"
+                @click="watchEpisode(Number(selectedSeason), ep.episode_number)"
+              >
+                <div v-if="epStateClass(selectedSeason, ep.episode_number) === 'loading'" class="spinner" style="width:14px;height:14px;border-width:2px" />
+                <svg v-else viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                <span>Watch</span>
+              </button>
+              <button
+                class="episode-action-btn download"
+                aria-label="Download"
+                title="Download"
+                @click="downloadEpisode(Number(selectedSeason), ep.episode_number)"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download</span>
+              </button>
+              <button
+                v-if="!hasEpisode(tmdbId, Number(selectedSeason), ep.episode_number)"
                 class="episode-add-btn"
                 :class="{
                   loading: epStateClass(selectedSeason, ep.episode_number) === 'loading',
                   added: epStateClass(selectedSeason, ep.episode_number) === 'added',
                 }"
+                aria-label="Save for later"
+                title="Save for later"
                 :disabled="epStateClass(selectedSeason, ep.episode_number) === 'loading' || epStateClass(selectedSeason, ep.episode_number) === 'added'"
                 @click="addEpisode(Number(selectedSeason), ep.episode_number)"
               >
@@ -550,6 +697,7 @@ function epStateClass(season: string, ep: number) {
   <DownloadModal
     v-if="downloadTarget"
     :link="downloadTarget.link"
+    :direct-url="downloadTarget.directUrl"
     :bytes="downloadTarget.bytes"
     :filename="downloadTarget.filename"
     :title="downloadTarget.title"

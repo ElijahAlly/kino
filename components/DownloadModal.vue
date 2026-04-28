@@ -1,6 +1,10 @@
 <script setup lang="ts">
 const props = defineProps<{
-  link: string
+  // Exactly one of link/directUrl required. `link` is the RD hoster link
+  // (re-unrestricted at download time). `directUrl` is a pre-unrestricted RD
+  // URL — used when the caller came from /api/watch and already has it.
+  link?: string
+  directUrl?: string
   bytes: number
   filename: string
   title: string
@@ -58,7 +62,12 @@ async function start() {
     const res = await $fetch<{ token: string }>('/api/download/prepare', {
       method: 'POST',
       headers: { 'X-App-Secret': secret },
-      body: { link: props.link, filename: props.filename, bytes: props.bytes },
+      body: {
+        link: props.link,
+        directUrl: props.directUrl,
+        filename: props.filename,
+        bytes: props.bytes,
+      },
     })
     // Trigger download by clicking a hidden anchor with download attr.
     // Setting window.location is also possible but iOS Safari respects the

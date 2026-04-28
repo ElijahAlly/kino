@@ -6,16 +6,38 @@ const { library, syncing, syncNow } = useLibrary()
 const tmdbId = computed(() => Number(route.params.tmdbId))
 const movie = computed(() => library.value.movies.find(m => m.tmdbId === tmdbId.value) || null)
 
-// If we land here on a fresh tab with empty cache, kick a sync.
+// Direct-play payload set by router.push({ state: { directUrl, ... } }) from
+// the DetailView's "Watch" button. Lets us play a title that hasn't synced
+// into the library yet, with no extra round-trip. Lost on hard refresh —
+// in that case we fall back to the library lookup.
+interface DirectPayload {
+  directUrl: string
+  filename: string
+  bytes: number
+  title: string
+  subtitle?: string
+}
+const direct = ref<DirectPayload | null>(null)
 onMounted(() => {
-  if (!movie.value && !syncing.value && library.value.movies.length === 0) {
+  const s = (history.state || {}) as Partial<DirectPayload>
+  if (s.directUrl) {
+    direct.value = {
+      directUrl: s.directUrl,
+      filename: s.filename || 'movie.mp4',
+      bytes: Number(s.bytes) || 0,
+      title: s.title || 'Untitled',
+      subtitle: s.subtitle,
+    }
+  }
+  // If no direct payload and no library hit, kick a sync to populate cache.
+  if (!direct.value && !movie.value && !syncing.value && library.value.movies.length === 0) {
     syncNow({ silent: true })
   }
 })
 
 function exit() { router.back() }
 
-const subtitle = computed(() => {
+const librarySubtitle = computed(() => {
   if (!movie.value) return ''
   const parts = []
   if (movie.value.year) parts.push(String(movie.value.year))
@@ -26,10 +48,20 @@ const subtitle = computed(() => {
 
 <template>
   <Player
-    v-if="movie"
+    v-if="direct"
+    :tmdb-id="tmdbId"
+    :title="direct.title"
+    :subtitle="direct.subtitle"
+    :direct-url="direct.directUrl"
+    :bytes="direct.bytes"
+    :filename="direct.filename"
+  />
+
+  <Player
+    v-else-if="movie"
     :tmdb-id="movie.tmdbId"
     :title="movie.title"
-    :subtitle="subtitle"
+    :subtitle="librarySubtitle"
     :link="movie.file.link"
     :bytes="movie.file.bytes"
     :filename="movie.file.filename"
