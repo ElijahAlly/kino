@@ -53,6 +53,21 @@ async function followRedirects(url: string, maxHops = 10): Promise<{ finalUrl: s
   return { finalUrl: currentUrl, rdHosterLink }
 }
 
+// Detect packed-archive payloads (RAR/ZIP/etc.) by URL or filename. RD
+// occasionally returns these because the underlying torrent ships the video
+// inside a `.rar`. Browsers can't play them, ffmpeg can't read them, and the
+// only useful thing is to skip and try the next cached candidate.
+const ARCHIVE_EXT_RE = /\.(rar|r\d{2}|zip|7z|tar|gz|bz2|iso|cab)(?:\?|$)/i
+function isArchive(urlOrName: string): boolean {
+  if (!urlOrName) return false
+  try {
+    const path = new URL(urlOrName).pathname
+    return ARCHIVE_EXT_RE.test(path)
+  } catch {
+    return ARCHIVE_EXT_RE.test(urlOrName)
+  }
+}
+
 // Heuristic codec detection from a Torrentio stream title. Torrentio puts the
 // raw release name in `title`; we look for canonical encoder tags. False
 // positives are rare because release groups uniformly use these tokens.
@@ -125,17 +140,35 @@ export default defineEventHandler(async (event) => {
   }
 
   // For 'add' mode we just want to seed RD with the magnet; following the top
-  // candidate's redirect chain is enough. We don't need the unrestricted URL.
+  // candidate's redirect chain is enough. We don't need the unrestricted URL,
+  // but we still want to walk past archive-packed candidates (.rar etc.) so the
+  // library doesn't fill up with titles that can't be played.
   if (mode === 'add') {
-    const top = candidates[0]
-    if (!top?.url) return { success: false, error: 'Top candidate has no URL' }
-    try {
-      const { finalUrl } = await followRedirects(top.url)
-      const isRD = finalUrl.includes('real-debrid.com')
-      if (isRD) return { success: true, title: top.title || '', url: finalUrl }
-      return { success: false, error: 'Stream not cached on RD' }
-    } catch (err: any) {
-      return { success: false, error: `Resolve failed: ${err.message}` }
+    const addAttempts: string[] = []
+    const addMaxTries = Math.min(candidates.length, 3)
+    for (let i = 0; i < addMaxTries; i++) {
+      const stream = candidates[i]
+      if (!stream?.url) continue
+      try {
+        const { finalUrl } = await followRedirects(stream.url)
+        const isRD = finalUrl.includes('real-debrid.com')
+        if (!isRD) {
+          addAttempts.push(`${(stream.title || '?').slice(0, 50)} → not cached`)
+          continue
+        }
+        if (isArchive(finalUrl)) {
+          addAttempts.push(`${(stream.title || '?').slice(0, 50)} → packed archive, skipping`)
+          continue
+        }
+        return { success: true, title: stream.title || '', url: finalUrl }
+      } catch (err: any) {
+        addAttempts.push(`hop error: ${err.message}`)
+      }
+    }
+    return {
+      success: false,
+      error: 'No playable stream found for this title (cached candidates were packed archives or not on RD).',
+      attempts: addAttempts,
     }
   }
 
@@ -144,6 +177,7 @@ export default defineEventHandler(async (event) => {
   // number of unrelated torrents to the RD account on misses.
   const attempts: string[] = []
   const maxTries = Math.min(candidates.length, 3)
+  let archiveSkipped = 0
   for (let i = 0; i < maxTries; i++) {
     const stream = candidates[i]
     if (!stream.url) continue
@@ -152,6 +186,15 @@ export default defineEventHandler(async (event) => {
       const isRD = finalUrl.includes('real-debrid.com')
       attempts.push(`${(stream.title || '?').slice(0, 50)} → ${isRD ? 'RD ✓' : 'not cached'}`)
       if (!isRD) continue
+
+      // Reject packed archives — `.rar` etc. are not playable in <video> and
+      // ffmpeg can't read them. Try the next candidate instead of returning a
+      // URL the user will only see fail with "File format isn't supported".
+      if (isArchive(finalUrl)) {
+        archiveSkipped++
+        attempts[attempts.length - 1] += ' (packed archive, skipped)'
+        continue
+      }
 
       // Best-effort enrich with filename + filesize. We have the hoster link
       // when we captured one mid-chain; otherwise use the title heuristic.
@@ -162,6 +205,13 @@ export default defineEventHandler(async (event) => {
           const meta = await unrestrictLink(rdHosterLink)
           filename = meta.filename || filename
           filesize = meta.filesize || filesize
+          // Some hosters report a video URL but the actual unrestricted
+          // download is the archive. Catch that here too.
+          if (isArchive(meta.download) || isArchive(meta.filename || '')) {
+            archiveSkipped++
+            attempts[attempts.length - 1] += ' (packed archive on unrestrict, skipped)'
+            continue
+          }
         } catch {
           // unrestrict failed — fall back to whatever we have. The direct URL
           // we already followed-to is still valid for ~hours.
@@ -181,9 +231,12 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  const reason = archiveSkipped > 0
+    ? `No playable stream found — ${archiveSkipped} cached candidate${archiveSkipped > 1 ? 's were' : ' was'} packed in an archive (.rar) the browser can't play. Try downloading instead, or pick another title.`
+    : `${candidates.length} candidate stream(s), none cached on RD`
   return {
     success: false,
-    error: `${candidates.length} candidate stream(s), none cached on RD`,
+    error: reason,
     attempts,
   }
 })

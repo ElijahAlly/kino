@@ -159,6 +159,16 @@ function onVolumeChange() {
   muted.value = videoEl.value.muted
 }
 
+// Catch the case where the source URL is a packed archive (.rar etc.). The
+// server filters these out, but if one slips through (e.g. unrestrictLink
+// returned a video URL but the redirect chain landed on an archive), we want
+// to fail with a clear message instead of the generic codec error.
+const ARCHIVE_EXT_RE = /\.(rar|r\d{2}|zip|7z|tar|gz|bz2|iso|cab)(?:\?|$)/i
+function isArchiveUrl(url: string | null | undefined): boolean {
+  if (!url) return false
+  try { return ARCHIVE_EXT_RE.test(new URL(url).pathname) } catch { return ARCHIVE_EXT_RE.test(url) }
+}
+
 function onVideoError() {
   // Triggered when the browser can't load/decode the file. Surface as much
   // diagnostic info as the element exposes — code 4 is ambiguous (it can mean
@@ -167,23 +177,33 @@ function onVideoError() {
   if (!videoEl.value) return
   const v = videoEl.value
   const err = v.error
+  const src = v.currentSrc || streamUrl.value || ''
+
+  // Privacy: Firefox with `privacy.resistFingerprinting=true` blanks
+  // err.message, so we can't rely on it. Detect known unplayable shapes from
+  // the URL first.
+  if (isArchiveUrl(src)) {
+    streamError.value = 'No playable stream found — the cached file is a packed archive (.rar) the browser can\'t play. Try the Download button or pick another title.'
+    console.warn('[player] archive source rejected', { src: src.slice(0, 200) })
+    return
+  }
+
   const codes: Record<number, string> = {
     1: 'Playback aborted',
     2: 'Network error while loading the file',
-    3: 'Decoding error — codec not supported',
-    4: 'File format isn\'t supported — try downloading it as MP4 instead',
+    3: 'Decoding error — codec not supported by this browser',
+    4: 'No playable stream — the file format or codec isn\'t supported. Try Download instead.',
   }
   const baseMsg = err ? (codes[err.code] || `Unknown playback error (code ${err.code})`) : 'Playback failed'
   const detail = err?.message || ''
 
-  const diag = {
+  console.warn('[player] video error', {
     code: err?.code,
     message: detail,
     networkState: v.networkState,
     readyState: v.readyState,
-    src: v.currentSrc?.slice(0, 200),
-  }
-  console.warn('[player] video error', diag)
+    src: src.slice(0, 200),
+  })
   streamError.value = detail ? `${baseMsg} — ${detail}` : baseMsg
 }
 

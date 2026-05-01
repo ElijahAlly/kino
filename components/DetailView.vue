@@ -106,6 +106,59 @@ async function watchMovie() {
   }
 }
 
+// For TV-level Watch/Download/Add: pick a default episode. If the user has
+// any episodes in their library for this show, prefer the lowest-numbered
+// one (so they land on something playable). Otherwise default to S1E1.
+function defaultTvEpisode(): { season: number; episode: number } {
+  if (libraryShow.value?.episodes.length) {
+    const sorted = [...libraryShow.value.episodes].sort(
+      (a, b) => a.season - b.season || a.episode - b.episode,
+    )
+    return { season: sorted[0].season, episode: sorted[0].episode }
+  }
+  return { season: 1, episode: 1 }
+}
+
+async function watchShow() {
+  if (watching.value) return
+  const { season, episode } = defaultTvEpisode()
+  watching.value = true
+  try {
+    await watchEpisode(season, episode)
+  } finally {
+    watching.value = false
+  }
+}
+
+async function downloadShow() {
+  if (downloadingFromBrowse.value) return
+  const { season, episode } = defaultTvEpisode()
+  downloadingFromBrowse.value = true
+  try {
+    await downloadEpisode(season, episode)
+  } finally {
+    downloadingFromBrowse.value = false
+  }
+}
+
+async function addShowToLibrary() {
+  // TV-level "Add to Library" seeds RD with episode 1 of season 1. From there
+  // the season list lets the user add more episodes individually or in bulk.
+  addingLibrary.value = true
+  try {
+    const result = await callWatch({ mode: 'add', season: 1, episode: 1 })
+    if (!result?.success) {
+      showToast(result?.error || 'Not available.', 'error')
+      return
+    }
+    addedToLibrary.value = true
+    refreshLibrarySoon()
+    showToast(`${title.value} S01E01 added to library!`, 'success')
+  } finally {
+    addingLibrary.value = false
+  }
+}
+
 async function downloadMovie() {
   if (libraryMovie.value) {
     const m = libraryMovie.value
@@ -470,29 +523,49 @@ function epStateClass(season: string, ep: number) {
     </div>
 
     <div class="detail-actions">
+      <button
+        class="btn-primary"
+        :disabled="watching"
+        @click="type === 'movie' ? watchMovie() : watchShow()"
+      >
+        <template v-if="watching">
+          <div class="spinner" /> Finding stream…
+        </template>
+        <template v-else>
+          <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+          Watch
+        </template>
+      </button>
+
+      <button
+        class="btn-outline"
+        @click="showTrailer = true"
+        :disabled="!trailer"
+        :title="trailer ? '' : 'No trailer available for this title'"
+      >
+        <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+        Watch Trailer
+      </button>
+
+      <button
+        class="btn-outline"
+        :disabled="downloadingFromBrowse"
+        @click="type === 'movie' ? downloadMovie() : downloadShow()"
+      >
+        <template v-if="downloadingFromBrowse">
+          <div class="spinner" /> Preparing…
+        </template>
+        <template v-else>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          Download
+        </template>
+      </button>
+
       <template v-if="type === 'movie'">
-        <button class="btn-primary" :disabled="watching" @click="watchMovie">
-          <template v-if="watching">
-            <div class="spinner" /> Finding stream…
-          </template>
-          <template v-else>
-            <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-            Watch
-          </template>
-        </button>
-        <button class="btn-outline" :disabled="downloadingFromBrowse" @click="downloadMovie">
-          <template v-if="downloadingFromBrowse">
-            <div class="spinner" /> Preparing…
-          </template>
-          <template v-else>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            Download
-          </template>
-        </button>
         <button
           v-if="!libraryMovie"
           class="btn-outline"
@@ -509,7 +582,7 @@ function epStateClass(season: string, ep: number) {
           </template>
           <template v-else>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:18px;height:18px"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            Save for later
+            Add to Library
           </template>
         </button>
         <button
@@ -523,14 +596,33 @@ function epStateClass(season: string, ep: number) {
           </template>
           <template v-else>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-            Remove
+            Remove from Library
           </template>
         </button>
       </template>
 
-      <template v-else-if="type === 'tv'">
+      <template v-else>
         <button
-          v-if="libraryShow"
+          v-if="!libraryShow"
+          class="btn-outline"
+          :class="{ loading: addingLibrary, success: addedToLibrary }"
+          :disabled="addingLibrary || addedToLibrary"
+          @click="addShowToLibrary"
+        >
+          <template v-if="addingLibrary">
+            <div class="spinner" /> Adding…
+          </template>
+          <template v-else-if="addedToLibrary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="20 6 9 17 4 12" /></svg>
+            Added!
+          </template>
+          <template v-else>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="width:18px;height:18px"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            Add to Library
+          </template>
+        </button>
+        <button
+          v-else
           class="btn-outline"
           :disabled="removing"
           @click="removeTitle"
@@ -540,19 +632,10 @@ function epStateClass(season: string, ep: number) {
           </template>
           <template v-else>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6M14 11v6" /></svg>
-            Remove from library
+            Remove from Library
           </template>
         </button>
       </template>
-
-      <button
-        v-if="trailer"
-        class="btn-outline"
-        @click="showTrailer = true"
-      >
-        <svg viewBox="0 0 24 24" fill="currentColor" style="width:18px;height:18px"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-        Watch Trailer
-      </button>
     </div>
 
     <div v-if="overview" class="detail-overview">
