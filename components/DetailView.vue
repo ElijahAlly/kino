@@ -99,6 +99,7 @@ async function watchMovie() {
         bytes: res.filesize || 0,
         title: title.value,
         subtitle: year.value || undefined,
+        imdbId: imdbId.value || undefined,
       },
     })
   } finally {
@@ -217,6 +218,7 @@ async function watchEpisode(season: number, episode: number) {
         bytes: res.filesize || 0,
         title: title.value,
         subtitle: `S${season}E${episode}`,
+        imdbId: imdbId.value || undefined,
       },
     })
   } catch {

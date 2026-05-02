@@ -18,6 +18,7 @@ interface DirectPayload {
   bytes: number
   title: string
   subtitle?: string
+  imdbId?: string
 }
 const direct = ref<DirectPayload | null>(null)
 
@@ -46,6 +47,7 @@ onMounted(() => {
       bytes: Number(s.bytes) || 0,
       title: s.title || 'Untitled',
       subtitle: s.subtitle,
+      imdbId: s.imdbId,
     }
   }
   if (!direct.value && !show.value && !syncing.value && library.value.tv.length === 0) {
@@ -84,6 +86,7 @@ const librarySubtitle = computed(() => {
     :direct-url="direct.directUrl"
     :bytes="direct.bytes"
     :filename="direct.filename"
+    :imdb-id="direct.imdbId"
   />
 
   <Player
@@ -99,6 +102,7 @@ const librarySubtitle = computed(() => {
     :prev-episode="prevEpisode"
     :next-episode="nextEpisode"
     :show-tmdb-id="show.tmdbId"
+    :imdb-id="show.imdbId || undefined"
     @goto="gotoEp"
   />
 

@@ -28,6 +28,10 @@ interface Props {
 
   // For TV navigation
   showTmdbId?: number
+
+  // IMDb ID — used to look up external subtitles. Optional; when missing the
+  // CC button is hidden and we just play without subtitles.
+  imdbId?: string
 }
 
 const props = defineProps<Props>()
@@ -57,6 +61,262 @@ const showDownloadModal = ref(false)
 
 let hideTimer: number | null = null
 let saveTimer: number | null = null
+
+// ------- subtitles -------
+
+interface SubtitleTrack {
+  id: string
+  language: string
+  label: string
+  format: 'srt' | 'vtt' | 'ass' | 'ssa' | 'unknown'
+  hearingImpaired: boolean
+  source: string
+  url: string  // base64-encoded original URL — fed back to /api/subtitle
+}
+
+const SUB_PREFS_KEY = 'kino-subtitle-prefs-v1'
+
+interface SubtitlePrefs {
+  enabled: boolean
+  preferredLang: string | null    // ISO code, e.g. 'en'
+  fontFamily: string
+  fontScale: number               // 0.6 .. 2.4 (multiplier on base 22px)
+  textColor: string
+  textOpacity: number             // 0..1
+  bgColor: string
+  bgOpacity: number               // 0..1
+  edgeStyle: 'none' | 'shadow' | 'outline' | 'raised' | 'depressed'
+  position: number                // 0 (top) .. 100 (bottom-most)
+}
+
+const DEFAULT_PREFS: SubtitlePrefs = {
+  enabled: true,
+  preferredLang: 'en',
+  fontFamily: 'system',
+  fontScale: 1,
+  textColor: '#ffffff',
+  textOpacity: 1,
+  bgColor: '#000000',
+  bgOpacity: 0.6,
+  edgeStyle: 'shadow',
+  position: 88,
+}
+
+function loadPrefs(): SubtitlePrefs {
+  try {
+    const raw = localStorage.getItem(SUB_PREFS_KEY)
+    if (!raw) return { ...DEFAULT_PREFS }
+    const parsed = JSON.parse(raw)
+    return { ...DEFAULT_PREFS, ...parsed }
+  } catch {
+    return { ...DEFAULT_PREFS }
+  }
+}
+
+function savePrefs(p: SubtitlePrefs) {
+  try { localStorage.setItem(SUB_PREFS_KEY, JSON.stringify(p)) } catch {}
+}
+
+const subtitleTracks = ref<SubtitleTrack[]>([])
+const loadingSubtitles = ref(false)
+const activeTrackId = ref<string | null>(null)
+const showCcMenu = ref(false)
+const showCcCustomize = ref(false)
+const prefs = ref<SubtitlePrefs>({ ...DEFAULT_PREFS })
+
+const subtitlesAvailable = computed(() => !!props.imdbId)
+
+const FONT_FAMILIES: { value: string; label: string; css: string }[] = [
+  { value: 'system', label: 'Default', css: 'system-ui, -apple-system, sans-serif' },
+  { value: 'sans', label: 'Sans-serif', css: '"Helvetica Neue", Arial, sans-serif' },
+  { value: 'serif', label: 'Serif', css: 'Georgia, "Times New Roman", serif' },
+  { value: 'mono', label: 'Monospace', css: '"SF Mono", Menlo, Consolas, monospace' },
+  { value: 'rounded', label: 'Rounded', css: '"SF Pro Rounded", "Nunito", system-ui, sans-serif' },
+]
+
+function fontFamilyCss(value: string): string {
+  return FONT_FAMILIES.find(f => f.value === value)?.css || FONT_FAMILIES[0].css
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '')
+  if (!m) return `rgba(255,255,255,${alpha})`
+  const v = parseInt(m[1], 16)
+  const r = (v >> 16) & 0xff
+  const g = (v >> 8) & 0xff
+  const b = v & 0xff
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+function edgeShadow(style: SubtitlePrefs['edgeStyle'], color: string): string {
+  // Browsers (Chromium especially) ignore most ::cue properties at higher
+  // specificity, but text-shadow on ::cue is broadly respected.
+  switch (style) {
+    case 'none': return 'none'
+    case 'outline':
+      return `-1px -1px 0 ${color}, 1px -1px 0 ${color}, -1px 1px 0 ${color}, 1px 1px 0 ${color}, 0 0 4px ${color}`
+    case 'raised':
+      return `1px 1px 0 ${color}, 2px 2px 0 ${color}, 3px 3px 4px rgba(0,0,0,0.6)`
+    case 'depressed':
+      return `-1px -1px 0 ${color}, 0 0 4px ${color}`
+    case 'shadow':
+    default:
+      return `0 2px 4px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.9)`
+  }
+}
+
+const cueStyle = computed(() => {
+  const p = prefs.value
+  return {
+    fontFamily: fontFamilyCss(p.fontFamily),
+    fontSize: `clamp(14px, ${(2.4 * p.fontScale).toFixed(2)}vw, ${Math.round(48 * p.fontScale)}px)`,
+    color: hexToRgba(p.textColor, p.textOpacity),
+    background: p.bgOpacity > 0 ? hexToRgba(p.bgColor, p.bgOpacity) : 'transparent',
+    textShadow: edgeShadow(p.edgeStyle, '#000000'),
+  }
+})
+
+// Position the overlay container as a percentage from the top of the video.
+// 88 ≈ standard captions zone (above the bottom controls); 50 = vertical center.
+const cueContainerStyle = computed(() => ({
+  top: `${prefs.value.position}%`,
+  transform: 'translate(-50%, -100%)',
+}))
+
+async function fetchSubtitles() {
+  if (!props.imdbId) {
+    subtitleTracks.value = []
+    return
+  }
+  loadingSubtitles.value = true
+  try {
+    const params: Record<string, any> = { imdbId: props.imdbId }
+    if (props.season != null) params.season = props.season
+    if (props.episode != null) params.episode = props.episode
+    const res = await $fetch<{ tracks: SubtitleTrack[]; error?: string }>('/api/subtitles', { params })
+    subtitleTracks.value = res.tracks || []
+  } catch {
+    subtitleTracks.value = []
+  } finally {
+    loadingSubtitles.value = false
+    pickInitialTrack()
+  }
+}
+
+function pickInitialTrack() {
+  if (!prefs.value.enabled || subtitleTracks.value.length === 0) {
+    activeTrackId.value = null
+    return
+  }
+  const wanted = prefs.value.preferredLang || 'en'
+  const exact = subtitleTracks.value.find(t => t.language === wanted && !t.hearingImpaired)
+  const langMatch = subtitleTracks.value.find(t => t.language.startsWith(wanted))
+  const fallback = subtitleTracks.value[0]
+  activeTrackId.value = (exact || langMatch || fallback)?.id || null
+}
+
+function selectTrack(id: string | null) {
+  activeTrackId.value = id
+  prefs.value.enabled = id != null
+  if (id) {
+    const t = subtitleTracks.value.find(x => x.id === id)
+    if (t) prefs.value.preferredLang = t.language
+  }
+  savePrefs(prefs.value)
+  showCcMenu.value = false
+}
+
+function toggleCc() {
+  if (subtitleTracks.value.length === 0) return
+  if (activeTrackId.value) {
+    selectTrack(null)
+  } else {
+    pickInitialTrack()
+    prefs.value.enabled = activeTrackId.value != null
+    savePrefs(prefs.value)
+  }
+}
+
+function updatePref<K extends keyof SubtitlePrefs>(key: K, value: SubtitlePrefs[K]) {
+  prefs.value = { ...prefs.value, [key]: value }
+  savePrefs(prefs.value)
+}
+
+function resetPrefs() {
+  prefs.value = { ...DEFAULT_PREFS, enabled: prefs.value.enabled, preferredLang: prefs.value.preferredLang }
+  savePrefs(prefs.value)
+}
+
+// Render VTT cue text into safe HTML. VTT supports <b> <i> <u> <c> tags and
+// uses \n for line breaks. We escape everything else to prevent injection.
+function formatCueText(raw: string): string {
+  const escaped = raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  // Re-allow a small whitelist of WebVTT inline tags after escaping.
+  const withTags = escaped
+    .replace(/&lt;(\/?(?:b|i|u))&gt;/gi, '<$1>')
+    // Strip class/voice tags but keep their content.
+    .replace(/&lt;c[^&]*&gt;/gi, '')
+    .replace(/&lt;\/c&gt;/gi, '')
+    .replace(/&lt;v[^&]*&gt;/gi, '')
+    .replace(/&lt;\/v&gt;/gi, '')
+  return withTags.replace(/\n/g, '<br>')
+}
+
+// Active cue text for our custom overlay. We use mode='hidden' on the chosen
+// track (browser parses cues but doesn't render its own caption box), then
+// listen to cuechange and paint the cues into our own DOM. This gives us full
+// styling control — ::cue CSS is patchy across browsers and ignores position.
+const activeCueText = ref<string[]>([])
+let activeTextTrack: TextTrack | null = null
+
+function onCueChange(this: TextTrack) {
+  const list: string[] = []
+  for (let i = 0; i < this.activeCues!.length; i++) {
+    const cue: any = this.activeCues![i]
+    if (typeof cue.text === 'string' && cue.text) list.push(cue.text)
+  }
+  activeCueText.value = list
+}
+
+function detachCueListener() {
+  if (activeTextTrack) {
+    activeTextTrack.removeEventListener('cuechange', onCueChange as EventListener)
+    activeTextTrack = null
+  }
+  activeCueText.value = []
+}
+
+function applyTrackMode() {
+  if (!videoEl.value) return
+  detachCueListener()
+  const tracks = videoEl.value.textTracks
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i]
+    const id = (t as any).id || ''
+    if (id === activeTrackId.value) {
+      // 'hidden' parses cues but suppresses native rendering — exactly what
+      // we want so our custom overlay can show them with full styling.
+      t.mode = 'hidden'
+      t.addEventListener('cuechange', onCueChange as EventListener)
+      activeTextTrack = t
+      // Paint immediately in case cues are already loaded.
+      onCueChange.call(t)
+    } else {
+      t.mode = 'disabled'
+    }
+  }
+}
+
+watch(activeTrackId, () => { nextTick(applyTrackMode) })
+watch(subtitleTracks, () => { nextTick(applyTrackMode) })
+
+// Refetch subtitles when navigating between episodes (keeps the same Player).
+watch(() => [props.imdbId, props.season, props.episode], () => {
+  fetchSubtitles()
+})
 
 // ------- stream resolution -------
 
@@ -298,7 +558,9 @@ function bumpControls() {
   showControls.value = true
   if (hideTimer) window.clearTimeout(hideTimer)
   hideTimer = window.setTimeout(() => {
-    if (playing.value && !showDownloadModal.value) showControls.value = false
+    if (playing.value && !showDownloadModal.value && !showCcMenu.value && !showCcCustomize.value) {
+      showControls.value = false
+    }
   }, 3000)
 }
 
@@ -324,6 +586,11 @@ function onKey(e: KeyboardEvent) {
       e.preventDefault(); toggleFullscreen(); break
     case 'm': case 'M':
       e.preventDefault(); toggleMute(); bumpControls(); break
+    case 'c': case 'C':
+      if (subtitleTracks.value.length) {
+        e.preventDefault(); toggleCc(); bumpControls()
+      }
+      break
     case 'n': case 'N':
       if (props.nextEpisode) { e.preventDefault(); gotoNext() }
       break
@@ -331,7 +598,9 @@ function onKey(e: KeyboardEvent) {
       if (props.prevEpisode) { e.preventDefault(); gotoPrev() }
       break
     case 'Escape':
-      if (document.fullscreenElement) { /* fs handler will toggle */ }
+      if (showCcCustomize.value) { showCcCustomize.value = false }
+      else if (showCcMenu.value) { showCcMenu.value = false }
+      else if (document.fullscreenElement) { /* fs handler will toggle */ }
       else exit()
       break
   }
@@ -358,10 +627,19 @@ const bufferedPct = computed(() => duration.value > 0 ? (buffered.value / durati
 
 // ------- lifecycle -------
 
+function onDocClick() {
+  // The button uses @click.stop, so clicks on it never reach here.
+  // Clicks inside the menu also use @click.stop. Anything else closes it.
+  if (showCcMenu.value) showCcMenu.value = false
+}
+
 onMounted(() => {
+  prefs.value = loadPrefs()
   resolveStream()
+  fetchSubtitles()
   window.addEventListener('keydown', onKey)
   document.addEventListener('fullscreenchange', onFsChange)
+  document.addEventListener('click', onDocClick)
   bumpControls()
 })
 
@@ -371,8 +649,10 @@ onBeforeUnmount(() => {
   }
   if (hideTimer) window.clearTimeout(hideTimer)
   if (saveTimer) window.clearTimeout(saveTimer)
+  detachCueListener()
   window.removeEventListener('keydown', onKey)
   document.removeEventListener('fullscreenchange', onFsChange)
+  document.removeEventListener('click', onDocClick)
   window.removeEventListener('mousemove', onProgressMouseMove)
   window.removeEventListener('mouseup', onProgressMouseUp)
 })
@@ -409,7 +689,32 @@ watch(() => [props.link, props.directUrl], () => {
       @volumechange="onVolumeChange"
       @error="onVideoError"
       @click="togglePlay"
-    />
+    >
+      <track
+        v-for="t in subtitleTracks"
+        :key="t.id"
+        :id="t.id"
+        kind="subtitles"
+        :src="`/api/subtitle?u=${encodeURIComponent(t.url)}&format=${t.format}`"
+        :srclang="t.language"
+        :label="t.label + (t.hearingImpaired ? ' (CC)' : '')"
+      >
+    </video>
+
+    <!-- Custom subtitle overlay (we render cues ourselves for full styling control) -->
+    <div
+      v-if="activeCueText.length"
+      class="player-cue-container"
+      :style="cueContainerStyle"
+    >
+      <div
+        v-for="(line, i) in activeCueText"
+        :key="i"
+        class="player-cue"
+        :style="cueStyle"
+        v-html="formatCueText(line)"
+      />
+    </div>
 
     <div v-if="loadingStream" class="player-overlay">
       <div class="spinner large" />
@@ -504,12 +809,173 @@ watch(() => [props.link, props.directUrl], () => {
 
         <div class="player-spacer" />
 
+        <div v-if="subtitlesAvailable" class="player-cc">
+          <button
+            class="player-icon-btn"
+            :class="{ active: !!activeTrackId }"
+            :aria-label="activeTrackId ? 'Subtitles on' : 'Subtitles off'"
+            :title="loadingSubtitles ? 'Loading subtitles…' : (activeTrackId ? 'Subtitles on (C)' : 'Subtitles off (C)')"
+            :disabled="!loadingSubtitles && subtitleTracks.length === 0"
+            @click.stop="showCcMenu = !showCcMenu; showCcCustomize = false"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="5" width="20" height="14" rx="2" ry="2" />
+              <path d="M7 11h2M7 14h4M14 11h3M14 14h3" />
+            </svg>
+          </button>
+
+          <Transition name="cc-menu">
+            <div v-if="showCcMenu" class="player-cc-menu" @click.stop>
+              <div class="player-cc-menu-header">
+                <span>Subtitles</span>
+                <button
+                  class="player-cc-customize-link"
+                  @click="showCcCustomize = true; showCcMenu = false"
+                >
+                  Customize
+                </button>
+              </div>
+
+              <button
+                class="player-cc-menu-item"
+                :class="{ active: activeTrackId == null }"
+                @click="selectTrack(null)"
+              >
+                <span class="player-cc-check">
+                  <svg v-if="activeTrackId == null" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </span>
+                <span>Off</span>
+              </button>
+
+              <div v-if="loadingSubtitles && subtitleTracks.length === 0" class="player-cc-menu-empty">
+                <div class="spinner" /> Loading…
+              </div>
+
+              <div v-else-if="subtitleTracks.length === 0" class="player-cc-menu-empty">
+                No subtitles found
+              </div>
+
+              <button
+                v-for="t in subtitleTracks"
+                :key="t.id"
+                class="player-cc-menu-item"
+                :class="{ active: t.id === activeTrackId }"
+                @click="selectTrack(t.id)"
+              >
+                <span class="player-cc-check">
+                  <svg v-if="t.id === activeTrackId" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                </span>
+                <span class="player-cc-menu-label">
+                  {{ t.label }}
+                  <span v-if="t.hearingImpaired" class="player-cc-badge">CC</span>
+                </span>
+              </button>
+            </div>
+          </Transition>
+        </div>
+
         <button class="player-icon-btn" :aria-label="isFullscreen ? 'Exit fullscreen' : 'Fullscreen'" @click="toggleFullscreen">
           <svg v-if="!isFullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" /></svg>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" /></svg>
         </button>
       </div>
     </div>
+
+    <Transition name="cc-customize">
+      <div
+        v-if="showCcCustomize"
+        class="player-cc-customize-backdrop"
+        @click.self="showCcCustomize = false"
+      >
+        <div class="player-cc-customize" @click.stop>
+          <div class="player-cc-customize-header">
+            <span>Caption style</span>
+            <button class="player-cc-customize-close" aria-label="Close" @click="showCcCustomize = false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            </button>
+          </div>
+
+          <div class="player-cc-customize-preview">
+            <div class="player-cue" :style="cueStyle">The quick brown fox</div>
+          </div>
+
+          <div class="player-cc-customize-grid">
+            <label class="player-cc-field">
+              <span>Font</span>
+              <select :value="prefs.fontFamily" @change="updatePref('fontFamily', ($event.target as HTMLSelectElement).value)">
+                <option v-for="f in FONT_FAMILIES" :key="f.value" :value="f.value">{{ f.label }}</option>
+              </select>
+            </label>
+
+            <label class="player-cc-field">
+              <span>Size <em>{{ Math.round(prefs.fontScale * 100) }}%</em></span>
+              <input
+                type="range" min="0.6" max="2.4" step="0.05"
+                :value="prefs.fontScale"
+                @input="updatePref('fontScale', parseFloat(($event.target as HTMLInputElement).value))"
+              >
+            </label>
+
+            <label class="player-cc-field">
+              <span>Edge style</span>
+              <select :value="prefs.edgeStyle" @change="updatePref('edgeStyle', ($event.target as HTMLSelectElement).value as any)">
+                <option value="none">None</option>
+                <option value="shadow">Drop shadow</option>
+                <option value="outline">Outline</option>
+                <option value="raised">Raised</option>
+                <option value="depressed">Depressed</option>
+              </select>
+            </label>
+
+            <label class="player-cc-field">
+              <span>Position <em>{{ prefs.position }}%</em></span>
+              <input
+                type="range" min="20" max="98" step="1"
+                :value="prefs.position"
+                @input="updatePref('position', parseInt(($event.target as HTMLInputElement).value, 10))"
+              >
+            </label>
+
+            <label class="player-cc-field">
+              <span>Text color</span>
+              <div class="player-cc-color-row">
+                <input
+                  type="color" :value="prefs.textColor"
+                  @input="updatePref('textColor', ($event.target as HTMLInputElement).value)"
+                >
+                <input
+                  type="range" min="0.2" max="1" step="0.05"
+                  :value="prefs.textOpacity"
+                  :title="`Text opacity ${Math.round(prefs.textOpacity * 100)}%`"
+                  @input="updatePref('textOpacity', parseFloat(($event.target as HTMLInputElement).value))"
+                >
+              </div>
+            </label>
+
+            <label class="player-cc-field">
+              <span>Background</span>
+              <div class="player-cc-color-row">
+                <input
+                  type="color" :value="prefs.bgColor"
+                  @input="updatePref('bgColor', ($event.target as HTMLInputElement).value)"
+                >
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  :value="prefs.bgOpacity"
+                  :title="`Background opacity ${Math.round(prefs.bgOpacity * 100)}%`"
+                  @input="updatePref('bgOpacity', parseFloat(($event.target as HTMLInputElement).value))"
+                >
+              </div>
+            </label>
+          </div>
+
+          <div class="player-cc-customize-footer">
+            <button class="player-cc-customize-reset" @click="resetPrefs">Reset to defaults</button>
+            <button class="player-cc-customize-done" @click="showCcCustomize = false">Done</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <DownloadModal
       v-if="showDownloadModal"

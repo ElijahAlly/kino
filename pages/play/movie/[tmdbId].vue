@@ -16,6 +16,7 @@ interface DirectPayload {
   bytes: number
   title: string
   subtitle?: string
+  imdbId?: string
 }
 const direct = ref<DirectPayload | null>(null)
 onMounted(() => {
@@ -27,6 +28,7 @@ onMounted(() => {
       bytes: Number(s.bytes) || 0,
       title: s.title || 'Untitled',
       subtitle: s.subtitle,
+      imdbId: s.imdbId,
     }
   }
   // If no direct payload and no library hit, kick a sync to populate cache.
@@ -55,6 +57,7 @@ const librarySubtitle = computed(() => {
     :direct-url="direct.directUrl"
     :bytes="direct.bytes"
     :filename="direct.filename"
+    :imdb-id="direct.imdbId"
   />
 
   <Player
@@ -65,6 +68,7 @@ const librarySubtitle = computed(() => {
     :link="movie.file.link"
     :bytes="movie.file.bytes"
     :filename="movie.file.filename"
+    :imdb-id="movie.imdbId || undefined"
   />
 
   <div v-else-if="syncing" class="player-fullscreen-empty">
