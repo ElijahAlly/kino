@@ -77,6 +77,23 @@ function isH264(title: string): boolean {
   return /\b(x264|h\.?264|avc|avc1)\b/.test(t)
 }
 
+// Reject titles whose audio codec the browser can't decode. Firefox in
+// particular ships no AC3/EAC3/DTS/TrueHD support, and Chrome's coverage is
+// patchy — silent video is a worse UX than picking a different cached
+// candidate. AAC is universally supported, so we treat it as the gate. When
+// no audio tag is present we let the candidate through (release name didn't
+// say either way).
+function hasBrowserAudio(title: string): boolean {
+  const t = title.toLowerCase()
+  // Atmos/TrueHD frequently ride on top of EAC3 but encode-only either way.
+  if (/\b(ac-?3|e-?ac-?3|dts(?:[-. ]?hd)?(?:[-. ]?ma)?|truehd|atmos)\b/.test(t)) return false
+  return true
+}
+
+function isBrowserPlayable(title: string): boolean {
+  return isH264(title) && hasBrowserAudio(title)
+}
+
 function streamFilenameFromTitle(title: string): string {
   // Torrentio's `title` field looks like:
   //   "Pluribus.S01E05.1080p.WEB.x265-Group\n👤 12 💾 1.6 GB ⚙️ ..."
@@ -93,7 +110,11 @@ export default defineEventHandler(async (event) => {
   const body = (await readBody(event)) as WatchBody
   const { imdbId, season, episode } = body || {}
   const mode = body?.mode ?? 'add'
-  const preferCodec = body?.preferCodec ?? (mode === 'play' ? 'h264' : 'any')
+  // 'add' seeds the library, which is for browser playback — default it to
+  // the same h264 filter as 'play' so we never cache an HEVC/AC3 file the
+  // <video> element can't decode. 'download' stays on 'any' because the
+  // download flow re-encodes anything the browser wouldn't accept.
+  const preferCodec = body?.preferCodec ?? (mode === 'download' ? 'any' : 'h264')
 
   if (!imdbId) {
     throw createError({ statusCode: 400, message: 'Missing required field: imdbId' })
@@ -125,16 +146,21 @@ export default defineEventHandler(async (event) => {
     return { success: false, error: 'No streams found (title may not be cached on RD)' }
   }
 
-  // Apply codec filter. If everything filters out and the user wanted H.264,
-  // fail loudly instead of silently falling back to HEVC — Safari can't play
-  // it and we'd rather tell the user than have the <video> element error.
+  // Apply codec filter. If everything filters out and the user wanted a
+  // browser-playable file, fail loudly instead of silently falling back to
+  // HEVC/AC3 — we'd rather tell the user than have the <video> element error
+  // or play silently.
   let candidates = streams
   if (preferCodec === 'h264') {
-    candidates = streams.filter(s => isH264(s.title || ''))
+    // Two-tier: prefer titles with browser-friendly audio AND H.264 video.
+    // If none match, fall back to H.264 video alone — better to risk silent
+    // audio than not play at all (some releases don't tag audio in the title).
+    const strict = streams.filter(s => isBrowserPlayable(s.title || ''))
+    candidates = strict.length > 0 ? strict : streams.filter(s => isH264(s.title || ''))
     if (candidates.length === 0) {
       return {
         success: false,
-        error: 'No H.264 streams cached on RD for this title. Try downloading instead — the download flow re-encodes HEVC for compatibility.',
+        error: 'No browser-playable streams cached on RD for this title. Try downloading instead — the download flow re-encodes HEVC/AC3 for compatibility.',
       }
     }
   }

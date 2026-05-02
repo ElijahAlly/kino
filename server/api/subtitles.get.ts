@@ -54,10 +54,20 @@ export default defineEventHandler(async (event): Promise<{ tracks: SubtitleTrack
   if (season != null && Number.isFinite(season)) params.set('season', String(season))
   if (episode != null && Number.isFinite(episode)) params.set('episode', String(episode))
 
+  // Wyzie sits behind Cloudflare and rejects bare server-to-server requests
+  // (Vercel egress with no UA → 401). Sending a real browser UA + Referer is
+  // enough to pass the bot check.
+  const wyzieHeaders: Record<string, string> = {
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Referer': 'https://sub.wyzie.ru/',
+  }
+
   let raw: WyzieSub[] = []
   try {
     const res = await fetch(`https://sub.wyzie.ru/search?${params}`, {
-      headers: { 'Accept': 'application/json' },
+      headers: wyzieHeaders,
     })
     if (!res.ok) return { tracks: [], error: `Subtitle search HTTP ${res.status}` }
     const data = await res.json()
